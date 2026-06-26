@@ -137,7 +137,7 @@ module tb_FFTButterfly();
         
     // first i vectors from file, unpipelined:
     get_from_file = 1;
-    while(i-- && $fscanf(fd, "%x %x %x %x %x %x %x %x %x %x\n", 
+    while(i != 0 && $fscanf(fd, "%x %x %x %x %x %x %x %x %x %x\n",
                     a_in_real, a_in_imag, b_in_real, b_in_imag, tw_real, tw_imag, 
                     dummy, dummy, dummy, dummy) == 10) begin
           start = 1'd1;
@@ -152,6 +152,7 @@ module tb_FFTButterfly();
           start = 1'd0;
           @(posedge clk iff done == 1'b1);
           #1;
+          i = i - 1;   // (post-decrement in while() expr unsupported by the sim front-end)
     end
     
     #50;
@@ -189,7 +190,7 @@ module tb_FFTButterfly();
         
     // first i vectors from file, unpipelined:
     get_from_file = 1;
-    while(i-- && $fscanf(fd, "%x %x %x %x %x %x %x %x %x %x\n", 
+    while(i != 0 && $fscanf(fd, "%x %x %x %x %x %x %x %x %x %x\n",
                     a_in_real, a_in_imag, b_in_real, b_in_imag, tw_real, tw_imag, 
                     dummy, dummy, dummy, dummy) == 10) begin
           start = 1'd1;
@@ -204,6 +205,7 @@ module tb_FFTButterfly();
           start = 1'd0;
           @(posedge clk iff done == 1'b1);
           #1;
+          i = i - 1;   // (post-decrement in while() expr unsupported by the sim front-end)
     end
     
     #50;

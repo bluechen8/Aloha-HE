@@ -1,14 +1,14 @@
 `timescale 1ns / 1ps
 `include "CommonDefinitions.vh"
 
-module tb_UnifiedTransformation();
-
-
-  //////////////////////////
-  localparam ON_THE_FLY_GENERATION = 1;
-  localparam FORWARD_TRANSFORM = 0;
-  localparam DO_FFT = 1; // 1: FFT, 0: NTT
-  /////////////////////////
+// Config knobs promoted from localparam to module parameters so a sim harness
+// can -G-select a config; defaults set to NTT-forward (the upstream default of
+// inverse-transform has no shipped tv/ vectors). 1: FFT, 0: NTT.
+module tb_UnifiedTransformation #(
+  parameter ON_THE_FLY_GENERATION = 1,
+  parameter FORWARD_TRANSFORM = 1,
+  parameter DO_FFT = 0
+)();
 
   localparam TW_ROM_ADDR_BITS = 9;
   localparam LOGN = 13;
