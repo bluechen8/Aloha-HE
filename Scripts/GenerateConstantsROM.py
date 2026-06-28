@@ -2,6 +2,7 @@
 
 from math import log2, ceil
 import cmath
+import sys
 from helper import doubleToUint64, modinv, find_min_primitive_root
 
 ####################################################
@@ -17,7 +18,7 @@ from helper import doubleToUint64, modinv, find_min_primitive_root
 # Enter primes in corresponding arrays below.
 ####################################################
 
-N = 2**13 # polynomial degree
+N = 2**(int(sys.argv[1]) if len(sys.argv) > 1 else 13) # polynomial degree (arg1 = LOGN, default 13)
 w = 24 # word size
 m = 17 # bit-width of q_m
 k_min = 46 # min bit-width of moduli
@@ -114,7 +115,7 @@ def rns_getLines(moduli):
   return lines
 
 
-f_target = open("../Aloha-HE_Common/MemoryInitializationFiles/TwFctrCache_RNSConsts_new.coe","w")
+f_target = open(sys.argv[2] if len(sys.argv) > 2 else "../Aloha-HE_Common/MemoryInitializationFiles/TwFctrCache_RNSConsts_new.coe","w")
 lines_written = 0
 f_target.write("memory_initialization_radix = 16;\nmemory_initialization_vector = ")
 

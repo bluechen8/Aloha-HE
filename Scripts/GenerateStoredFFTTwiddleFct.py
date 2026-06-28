@@ -110,7 +110,7 @@ def FFTRootRelations(roots, iroots):
   root_it = 0
   gap = N >> 1
   m = 1
-  base = 4095
+  base = (N >> 1) - 1   # was hardcoded 4095 (=N/2-1 at N=8192)
   while m <= (N >> 1):    
       for i in range(m):
           r = iroots[root_it]
@@ -136,12 +136,13 @@ def FFTRootRelations(roots, iroots):
   return roots_reduced, produced_tw, produced_inv_tw
 
 
-n = 2**13 # polynomial degree
+import sys
+n = 2**(int(sys.argv[1]) if len(sys.argv) > 1 else 13) # polynomial degree (arg1 = LOGN, default 13)
 roots = FFT_getRoots_encoding(n)
 iroots = FFT_getRoots_decoding(n)
 
 reduced_roots, _, _ = FFTRootRelations(roots, iroots)
-f_twiddle = open("../Aloha-HE_Common/MemoryInitializationFiles/FFTStoredTwiddleFactors.coe", "w+")
+f_twiddle = open(sys.argv[2] if len(sys.argv) > 2 else "../Aloha-HE_Common/MemoryInitializationFiles/FFTStoredTwiddleFactors.coe", "w+")
 f_twiddle.write("memory_initialization_radix = 16;\n")
 f_twiddle.write("memory_initialization_vector = ")
 for e in reduced_roots:

@@ -1,12 +1,12 @@
 `timescale 1ns / 1ps
 
-module tb_RandomSampling();
+module tb_RandomSampling #(parameter N = 8192)();
+  localparam LOGN = $clog2(N);
 
 integer i, fd, fd_ref;
   logic clk = 1'b0, valid, done, rst = 1'd1;
   always #5 clk = ~clk;
 
-  localparam N = 8192;
 
   logic [5:0] expected_e0, expected_e1, dummy;
   logic [1:0] expected_v; 
@@ -65,7 +65,7 @@ integer i, fd, fd_ref;
   
   logic [63:0] seed;
   logic sample_errors = 'd1;
-  RandomSampling dut (
+  RandomSampling #(.LOGN(LOGN)) dut (
     .clk(clk),
     .rst(rst),
     .sample_errors(sample_errors),

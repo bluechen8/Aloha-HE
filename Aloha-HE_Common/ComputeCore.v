@@ -54,7 +54,7 @@ localparam DMA_FFT_BRAM_ID = 2'd3;
 
 
 input clk, rst; 
-input [13:0] address_ext;
+input [LOGN:0] address_ext; // SW-facing address: LOGN+1 bits spans the 2N coefficient space
 input [2:0] bram_sel;
 input [63:0] dina_ext;
 input wea_ext;
@@ -143,7 +143,7 @@ assign done_ins_computation = transformation_done | rns_done | i2f_done | pwm_do
 
 // Interface to Software for send64 and receive64 functions
 // This is for testing only and will not be used when PROVIDE_DEBUG_IO == 0
-wire [13:0] ext_rdwr_addr; 
+wire [LOGN:0] ext_rdwr_addr;
 assign ext_rdwr_addr = address_ext;
 
 wire fft_ext_wea;
@@ -267,7 +267,7 @@ Expand #(.LOGN(LOGN)) expand (
     .rst(rst),
     .do_expand(grant_ext ? do_expand : 1'd1),
     
-    .addr_from_sw(grant_ext ? ext_rdwr_addr[13:1]   : {1'd0, dma_rdwr_addr[LOGN-1:1]}),
+    .addr_from_sw(grant_ext ? ext_rdwr_addr[LOGN:1]   : {1'd0, dma_rdwr_addr[LOGN-1:1]}),
     .data_from_sw(grant_ext ? {real_part, dina_ext} : {real_part_dma, dina_dma}),
     .wea_from_sw( grant_ext ? fft_ext_wea : fft_dma_wea),
 
@@ -429,21 +429,21 @@ wire [1:0] v_bram_rd_data;
 CBDPolyBRAM e0_bram(
   .clka(clk),
   .wea(e0_bram_wea),
-  .addra(~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[12:0])),
+  .addra(~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
   .dina(e0_bram_wr_data),
   .douta(e0_bram_rd_data)
   );
 CBDPolyBRAM e1_bram(
   .clka(clk),
   .wea(e1_bram_wea),
-  .addra(~random_sampling_rst ? e1_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e1_bram_rd_addr : ext_rdwr_addr[12:0])),
+  .addra(~random_sampling_rst ? e1_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e1_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
   .dina(e1_bram_wr_data),
   .douta(e1_bram_rd_data)
   );
 TernaryPolyBRAM v_bram(
   .clka(clk),
   .wea(v_bram_wea),
-  .addra(~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[12:0])),
+  .addra(~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
   .dina(v_bram_wr_data),
   .douta(v_bram_rd_data)
   );
@@ -772,7 +772,7 @@ always @(posedge clk) begin
     random_sampling_rst_1DP <= random_sampling_rst;
 end
 
-RandomSampling #(.LOGN(13),.LOGQ(54),.M(17),.W(24)) random_sampling (
+RandomSampling #(.LOGN(LOGN),.LOGQ(54),.M(17),.W(24)) random_sampling (
     .clk(clk),
     .rst(random_sampling_rst_1DP),
     .sample_errors(sample_errors),

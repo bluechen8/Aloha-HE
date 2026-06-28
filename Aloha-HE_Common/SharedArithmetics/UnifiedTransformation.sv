@@ -130,7 +130,7 @@ module UnifiedTransformation #(
 
   assign stall_debug = stall;
   logic [$clog2(MULT_LAT)-1:0] stall_counter;
-  assign stall = is_dif ? (stall_counter < MULT_LAT) && (base_address == 'h1ffe) && (gap == 1) : 
+  assign stall = is_dif ? (stall_counter < MULT_LAT) && (base_address == (N-2)) && (gap == 1) :
                           (stall_counter < MULT_LAT+1) && (base_address == 'h0) && (gap == 1);
   always_ff @(posedge clk) begin
     if (rst_ctrl_ld_st || ~stall)
@@ -255,7 +255,7 @@ module UnifiedTransformation #(
     assign tw_real = tw_real_gen;
     assign tw_imag = tw_imag_gen;
   end else begin
-    FFTTwFctStorage tw_fct_storage 
+    FFTTwFctStorage #(.LOGN(ADDR_WIDTH+1)) tw_fct_storage
     (
       .clk(clk),
       .rst(rst_tw_fct_gen),

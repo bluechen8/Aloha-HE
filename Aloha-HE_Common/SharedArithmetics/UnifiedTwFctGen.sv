@@ -38,14 +38,23 @@ module UnifiedTwFctGen #(
 
   localparam NR_BF_PER_STAGE = N / 2;
   localparam ADDR_W_32 = 6'd31; // is the address of w^32 in the ROM
+  localparam LOGN = $clog2(N);        // = 13 at N=8192
+  localparam LOGLOGN = $clog2(LOGN);  // = 4  at N=8192; width of stage_counter
+  localparam TOP_STAGE = LOGN - 1;    // index of the final radix-2 stage (was hardcoded 12)
+  // Twiddle-cache layout (per modulus): 1 empty + 31 fixed entries (stages 0-4) +
+  // (LOGN-5) high entries w^(2^k) for stages 5..LOGN-1. The fixed region (relative
+  // offsets 0-30, incl. ADDR_W_32 and the ifft remap table) is N-independent; only
+  // the cache size and the DIT read start scale with LOGN.
+  localparam NTT_CACHE_STRIDE   = LOGN + 27;        // cache lines per modulus (40 @ N=8192)
+  localparam [5:0] ROM_ADDR_START_DIT = LOGN + 25;  // forward-NTT (DIT) read start (38 @ N=8192)
 
   // counters to keep track of the transformation progress:
   logic [$clog2($clog2(N)) + $clog2(N) - 2:0] overall_counter;
   logic [$clog2($clog2(N))-1:0] stage_counter;
   logic [$clog2(N)-2:0] butterfly_counter;
   logic stall;
-  assign stage_counter = is_DIF ? overall_counter[15:12] : 4'd 12 - overall_counter[15:12];
-  assign butterfly_counter = overall_counter[11:0];
+  assign stage_counter = is_DIF ? overall_counter[LOGLOGN+LOGN-2:LOGN-1] : TOP_STAGE - overall_counter[LOGLOGN+LOGN-2:LOGN-1];
+  assign butterfly_counter = overall_counter[LOGN-2:0];
   always_ff @(posedge clk)begin
   if(rst)
     overall_counter <= 0;
@@ -55,7 +64,7 @@ module UnifiedTwFctGen #(
 
   logic [$clog2(COMPLEX_MULT_LAT)-1:0] stall_counter;
   assign stall = is_DIF ? (stall_counter < COMPLEX_MULT_LAT) && (stage_counter == 1) && (butterfly_counter == 0) : 
-                                  (stall_counter < COMPLEX_MULT_LAT+1) && (overall_counter == 'hc000);
+                                  (stall_counter < COMPLEX_MULT_LAT+1) && (overall_counter == (TOP_STAGE << (LOGN-1)));
   always_ff @(posedge clk) begin
     if (rst || ~stall)
       stall_counter = 0;
@@ -74,13 +83,9 @@ module UnifiedTwFctGen #(
   logic [ADDR_WIDTH_ROM-1:0] rom_base_DP;
   assign rom_offset[5:0] = rst ? ADDR_W_32 : butterfly_counter == NR_BF_PER_STAGE - 4 ? rom_addr_next_w_c_DP : rom_addr_DP;
   always_ff @(posedge clk) begin
-    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : constants_sel == 0 ? 9'd129 + 0 :  // ROM layout has room for improvements 
-                                                               constants_sel == 1 ? 9'd129 + 40 :
-                                                               constants_sel == 2 ? 9'd129 + 80 :
-                                                               constants_sel == 3 ? 9'd129 + 120 :
-                                                               constants_sel == 4 ? 9'd129 + 160 :
-                                                               constants_sel == 5 ? 9'd129 + 200 :
-                                                               constants_sel == 6 ? 9'd129 + 240 : 9'd129 + 280; 
+    // NTT twiddle cache for modulus `constants_sel` lives at base 129 + sel*stride
+    // (stride = cache lines per modulus = LOGN+27; base 129 = 128-pad + skip empty slot).
+    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : 9'd129 + NTT_CACHE_STRIDE * constants_sel;
   end
   assign rom_addr = rom_base_DP + rom_offset;
 
@@ -90,7 +95,7 @@ module UnifiedTwFctGen #(
   logic advance_rom_addr;
   always_ff @(posedge clk) begin
     if(rst)
-      rom_addr_DP <= is_DIF ? 6'd0 : 6'd38;
+      rom_addr_DP <= is_DIF ? 6'd0 : ROM_ADDR_START_DIT;
     else if(advance_rom_addr)
       rom_addr_DP <= is_DIF ? rom_addr_DP + 1'd1 : rom_addr_ifft_DN;
 
@@ -137,6 +142,10 @@ module UnifiedTwFctGen #(
   end
 
   // halting logic:
+  // NOTE: this per-stage case is a fixed ladder enumerating stages 0..12, so it
+  // covers N up to 2^13 (each arm releases halt when the low stage_counter bits of
+  // butterfly_counter are all ones). Smaller N simply uses fewer arms; the generic
+  // top-stage term below tracks TOP_STAGE=LOGN-1. N>2^13 would need more arms.
   logic halt, halt_delayed;
   always_comb begin
     halt = 1'd1;
@@ -153,8 +162,11 @@ module UnifiedTwFctGen #(
       4'd9:  if(butterfly_counter[8:0] == 9'h1ff) halt = 1'd0;
       4'd10: if(butterfly_counter[9:0] == 10'h3ff) halt = 1'd0;
       4'd11: if(butterfly_counter[10:0] == 11'h7ff) halt = 1'd0;
-      4'd12: if(butterfly_counter[11:0] == 12'hfff || (butterfly_counter[11:0] == 12'h0 && ~is_DIF)) halt = 1'd0;
+      4'd12: if(butterfly_counter[11:0] == 12'hfff) halt = 1'd0;
     endcase
+    // top-stage DIT (forward NTT / iFFT) also releases halt on the first butterfly.
+    // Generalized from the hardcoded stage-12 term so it tracks TOP_STAGE = LOGN-1.
+    if(~is_DIF && stage_counter == TOP_STAGE && butterfly_counter == '0) halt = 1'd0;
   end
   DelayRegister #(.CYCLE_COUNT(2), .BITWIDTH(1)) halt_delay(.clk(clk), .in(halt), .out(halt_delayed));
 
@@ -241,7 +253,5 @@ module UnifiedTwFctGen #(
   assign tw_real = out_real_DP;
   assign tw_imag = out_imag_DP;
   assign tw_ntt = out_modring_DP;
-
-
 
 endmodule

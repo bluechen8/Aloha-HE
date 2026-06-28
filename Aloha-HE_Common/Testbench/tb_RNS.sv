@@ -1,12 +1,12 @@
 `timescale 1ns / 1ps
 `include "CommonDefinitions.vh"
 
-module tb_RNS();
+module tb_RNS #(parameter N = 8192)();
   integer i, fd, fd_ref,fd_error,fd_error_ref;
   logic clk = 1'b0, rst = 1'd1;
   always #5 clk = ~clk;
 
-  localparam N = 8192;
+  localparam LOGN = $clog2(N);
 
   logic bram_intr, done;
   logic wea_0_tb, wea_1_tb;
@@ -134,14 +134,14 @@ module tb_RNS();
   logic [53:0] mult_result;
   logic [`OVERALL_BITS-1:0] rns_read_data;
   RNS #(
-    .N(8192),    // polynomial degree
-    .LOGN(13),   // bit-size of polynomial coeficient addressing 
+    .N(N),       // polynomial degree
+    .LOGN(LOGN), // bit-size of polynomial coeficient addressing
     .LOGQ(54),   // maximum bit-size of one modulus
     .LOGI(4),    // 2*4 = 16 supported different moduli
     .W(24),      // word-size of WL-Montgomery reduction in bits
     .L(3),       // number of stages in WL-Montgomery reduction
     .M(17),      // number of non-zero bits in modulus
-    .ROM_BASE_ADDR(39) // base address with metadata needed in this module
+    .ROM_BASE_ADDR(LOGN+26) // RNS consts begin right after the fft cache (len = LOGN+26; was hardcoded 39 for N=8192)
   )dut(
     .clk(clk),
     .rst(rst),
@@ -187,7 +187,7 @@ module tb_RNS();
   logic [3:0] current_k;
   logic [16:0] qm;
   // We need the UniformTransformation here for its NTT Butterflies and NTT Twiddle factor generation 
-  UnifiedTransformation unif_transf (
+  UnifiedTransformation #(.N(N)) unif_transf (
     .clk(clk),
     .rst(1'd1),
     .is_dif(),

@@ -68,7 +68,7 @@ module PWM #(
   end
   assign a_bram_rd_addr = read_addr_DP;
   assign b_bram_rd_addr = read_addr_DP;
-  assign done_internal = read_addr_DP == 'h1fff;
+  assign done_internal = read_addr_DP == {LOGN{1'b1}}; // last coefficient = N-1 (= all-ones in LOGN bits)
   DelayRegister #(.CYCLE_COUNT(MODMUL_LAT), .BITWIDTH(LOGN)) c_rd_addr_delay (.clk(clk), .in(read_addr_DP), .out(c_bram_rd_addr));
   DelayRegister #(.CYCLE_COUNT(MODMUL_LAT+BRAM_RD_LAT+MODADD_LAT), .BITWIDTH(LOGN)) result_wr_addr_delay (.clk(clk), .in(read_addr_DP), .out(result_bram_wr_addr));
   DelayRegisterReset #(.CYCLE_COUNT(MODMUL_LAT+BRAM_RD_LAT+MODADD_LAT), .BITWIDTH(1)) wea_delay (.clk(clk), .rst(rst), .in(~rst), .out(result_bram_wea));

@@ -2,13 +2,15 @@
 `include "CommonDefinitions.vh"
 
 (* keep_hierarchy = `KEEP_HIERARCHY *)
-module FFTTwFctStorage(
+module FFTTwFctStorage #(
+    parameter LOGN = 13   // bit-size of polynomial coefficient addressing (N = 2^LOGN)
+  )(
     input clk,
     input rst,
     input is_forward_fft,
 
-    input [12:0] m,
-    input [12:0] i,
+    input [LOGN-1:0] m,
+    input [LOGN-1:0] i,
     input i_loop_done,
 
     output [`OVERALL_BITS-1:0] tw_real,
@@ -19,13 +21,13 @@ module FFTTwFctStorage(
 
   ////////////// Input delay to match timing to FFT: //////////////
   logic rst_delayed, i_loop_done_delayed, rst_delayed_forw, i_loop_done_delayed_forw, rst_delayed_inv, i_loop_done_delayed_inv;
-  logic [12:0] m_delayed, i_delayed, m_delayed_forw, i_delayed_forw, m_delayed_inv, i_delayed_inv;
-  DelayRegister #(.CYCLE_COUNT(1), .BITWIDTH(13+13+1+1)) inputs_delay_inverse (.clk(clk), .in({m, i, i_loop_done, rst}), .out({m_delayed_inv, i_delayed_inv, i_loop_done_delayed_inv, rst_delayed_inv}));
-  DelayRegister #(.CYCLE_COUNT(8), .BITWIDTH(13+13+1+1)) inputs_delay_forward (.clk(clk), .in({m_delayed_inv, i_delayed_inv, i_loop_done_delayed_inv, rst_delayed_inv}), .out({m_delayed_forw, i_delayed_forw, i_loop_done_delayed_forw, rst_delayed_forw}));
+  logic [LOGN-1:0] m_delayed, i_delayed, m_delayed_forw, i_delayed_forw, m_delayed_inv, i_delayed_inv;
+  DelayRegister #(.CYCLE_COUNT(1), .BITWIDTH(LOGN+LOGN+1+1)) inputs_delay_inverse (.clk(clk), .in({m, i, i_loop_done, rst}), .out({m_delayed_inv, i_delayed_inv, i_loop_done_delayed_inv, rst_delayed_inv}));
+  DelayRegister #(.CYCLE_COUNT(8), .BITWIDTH(LOGN+LOGN+1+1)) inputs_delay_forward (.clk(clk), .in({m_delayed_inv, i_delayed_inv, i_loop_done_delayed_inv, rst_delayed_inv}), .out({m_delayed_forw, i_delayed_forw, i_loop_done_delayed_forw, rst_delayed_forw}));
   assign {m_delayed, i_delayed, i_loop_done_delayed, rst_delayed} = is_forward_fft ? {m_delayed_forw, i_delayed_forw, i_loop_done_delayed_forw, rst_delayed_forw} : {m_delayed_inv, i_delayed_inv, i_loop_done_delayed_inv, rst_delayed_inv};
 
   ////////////// Twiddle factor ROM: //////////////
-  logic [11:0] rom_addr;
+  logic [LOGN-2:0] rom_addr; // twiddle ROM holds N/2 entries
   logic [2*`OVERALL_BITS-1:0] rom_data;
   FFTAllTwiddleROM all_twiddle_rom (.clka(clk), .addra(rom_addr), .douta(rom_data));
 
@@ -40,17 +42,17 @@ module FFTTwFctStorage(
 
   
   ////////////// Control logic: //////////////
-  logic [11:0] base_DP, base_DN;
+  logic [LOGN-2:0] base_DP, base_DN;
   always_ff @(posedge clk) begin
     if(rst_delayed) begin
-      base_DP <= is_forward_fft ? 'd0 : 'd4095;
+      base_DP <= is_forward_fft ? 'd0 : {(LOGN-1){1'b1}}; // N/2-1 = last twiddle-ROM index
     end else begin
       base_DP <= i_loop_done_delayed ? base_DN : base_DP;
     end
   end
   assign base_DN = is_forward_fft ? base_DP + (m_delayed >> 1) : base_DP - m_delayed;
 
-  logic [11:0] address, address_reverse;
+  logic [LOGN-2:0] address, address_reverse;
   assign address = base_DP + i_delayed;
   assign address_reverse = base_DP + m_delayed - 1 - i_delayed;
 

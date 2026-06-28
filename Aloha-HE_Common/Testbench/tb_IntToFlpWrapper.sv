@@ -1,12 +1,12 @@
 `timescale 1ns / 1ps
 
-module tb_IntToFlpWrapper();
+module tb_IntToFlpWrapper #(parameter N = 8192)();
 
   integer i, fd, fd_ref;
   logic clk = 1'b0, valid, done, rst = 1'd1;
   always #5 clk = ~clk;
 
-  localparam N = 8192;
+  localparam LOGN = $clog2(N);
 
   logic [`OVERALL_BITS-1:0] result, expected, dummy;
   logic [`OVERALL_BITS-1:0] out0,out1;
@@ -63,7 +63,7 @@ module tb_IntToFlpWrapper();
   assign ntt_rd_data = bram_sel ? ntt_rd_data1 : ntt_rd_data0;
   logic [`EXPONENT_BITS:0] scale_power_precomp;
 
-  IntToFlPWrapper dut (
+  IntToFlPWrapper #(.LOGN(LOGN)) dut (
     .clk(clk),
     .rst(rst),
     .current_k(current_k),

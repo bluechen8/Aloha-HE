@@ -49,6 +49,9 @@ module UnifiedLoadLogic #(
   );
 
   localparam BRAM_RD_LAT = 2;
+  // base_address sweeps [0, N-1] (N = 2^(ADDR_WIDTH+1)); the end-of-sweep stall
+  // boundaries below were hardcoded to N=8192 (N-2='h1ffe, N-3='h1ffd).
+  localparam N = 1 << (ADDR_WIDTH+1);
 
   logic [ADDR_WIDTH-1:0] addr_a, addr_b;
   logic bank_a, bank_b;
@@ -61,8 +64,8 @@ module UnifiedLoadLogic #(
 
   logic valid_a_forw_delayed, valid_a_inv_delayed,valid_a_forw_ntt_delayed;
   logic stall, stall_1DP, end_1DP;
-  assign stall = is_dif ? base_address == 'h1ffe && gap == 1 : 
-                         (base_address == 'h1ffd && gap == 2) || ctrl_stall;
+  assign stall = is_dif ? base_address == (N-2) && gap == 1 :
+                         (base_address == (N-3) && gap == 2) || ctrl_stall;
   always_ff @(posedge clk) stall_1DP <= stall;
   always_ff @(posedge clk) begin
     if(rst)
@@ -75,7 +78,7 @@ module UnifiedLoadLogic #(
   always_ff @(posedge clk) begin
     if(rst)
       bank_b_fixed_DP <= 0;
-    else if(~is_dif && base_address == 'h1ffe)
+    else if(~is_dif && base_address == (N-2))
       bank_b_fixed_DP <= 1;
   end
 

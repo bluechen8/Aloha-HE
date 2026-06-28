@@ -1,12 +1,12 @@
 `timescale 1ns / 1ps
 
 
-module tb_PWM();
+module tb_PWM #(parameter N = 8192)();
   integer i, fd, fd_ref;
   logic clk = 1'b0, valid, done, rst = 1'd1;
   always #5 clk = ~clk;
 
-  localparam N = 8192;
+  localparam LOGN = $clog2(N);
 
   logic [53:0] ina,inb,inc,dummy,out_r;
   logic [3:0] current_k;
@@ -31,7 +31,7 @@ module tb_PWM();
   logic [53:0] pwm_result,pwm_result1;
   PWM #(
     .LOGQ(54),
-    .LOGN(13),
+    .LOGN(LOGN),
     .W(24),
     .M(17)
   ) dut (
@@ -75,7 +75,8 @@ module tb_PWM();
 
 
   UnifiedTransformation #(
-    .FFT_ON_THE_FLY_GENERATION(0)
+    .FFT_ON_THE_FLY_GENERATION(0),
+    .N(N)
   ) transf (
     .clk(clk),
     .rst(1),
