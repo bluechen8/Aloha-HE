@@ -2,7 +2,24 @@
 `include "CommonDefinitions.vh"
 
 
-module ComputeCore(clk, rst, 
+module ComputeCore #(
+//////////////////////////// Config Start //////////////////////////////////
+  // Set this to 1 for generating FFT twiddle factors on the fly
+  // Set this to 0 for using stored FFT twiddle factors
+  parameter FFT_ON_THE_FLY_GENERATION = 0,
+
+  // Set this to 1 to instantiate read and write logic for each BRAM.
+  // This is used for testing purposes. All tests for intermediate results
+  // needs this to be set to 1.
+  parameter PROVIDE_DEBUG_IO = 0,
+
+  // Ring dimension. N/LOGN are parameters (default 8192/13) so the composed
+  // core can be elaborated at small N for verification. The arithmetic is
+  // N-generic; only loop terminals / address slices scale with LOGN.
+  parameter LOGN = 13,
+  parameter N    = 1 << LOGN
+//////////////////////////// Config End ////////////////////////////////////
+) (clk, rst,
           address_ext, bram_sel, dina_ext, doutb_ext, wea_ext, // send64() and receive64() testing interface to software
 					command_in, command_we,                              // current instruction to execute
 					done_ins_computation,                                // instruction computation finished
@@ -10,23 +27,10 @@ module ComputeCore(clk, rst,
           dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en // DMA interface
 					);
 
-//////////////////////////// Config Start //////////////////////////////////
-// Set this to 1 for generating FFT twiddle factors on the fly
-// Set this to 0 for using stored FFT twiddle factors
-localparam FFT_ON_THE_FLY_GENERATION = 0;
-
-// Set this to 1 to instantiate read and write logic for each BRAM.
-// This is used for testing purposes. All tests for intermediate results
-// needs this to be set to 1.
-localparam PROVIDE_DEBUG_IO = 0;
-//////////////////////////// Config End ////////////////////////////////////
-
 
 //////////////////////// Constants in our design ///////////////////////////
 localparam BRAM_RD_LAT = 2;
 
-localparam N = 8192;
-localparam LOGN = 13;
 localparam FLP_WORDSIZE = `OVERALL_BITS;
 
 localparam LOGQ = 54; // max bit-width of moduli
@@ -236,14 +240,14 @@ SharedFFTBrams #(
     .is_fft(~pwm_rst || ~rns_rst || (~transform_rst & ~do_fft) || bram_sel == FFT_IM_BRAM_ID ? 1'd0 : 1'd1),
 
     // FFT Bank 0: (Complex BRAM)
-    .fft_rd_addr_bank0((~transform_rst) ? fft_read_addr_bank0  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[13:2]  : {1'd1, dma_rdwr_addr[12:2]})),
+    .fft_rd_addr_bank0((~transform_rst) ? fft_read_addr_bank0  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[LOGN:2]  : {1'd1, dma_rdwr_addr[LOGN-1:2]})),
     .fft_wr_addr_bank0((~transform_rst) ? fft_write_addr_bank0 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank0 : ext_write_addr_bank0), 
     .fft_rd_data_bank0(fft_rd_data_bank0), 
     .fft_wr_data_bank0((~transform_rst) ? fft_wr_data_bank0    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank0    : ext_wr_data_bank0), 
     .fft_wea_bank0(    (~transform_rst) ? fft_wea_bank0        : (~prj_rst) ? prj_wea_bank0  : (~i2f_rst) ? i2f_wea_bank0        : fft_ext_wea_bank0),
     
     // FFT Bank 1: (Complex BRAM)
-    .fft_rd_addr_bank1((~transform_rst) ? fft_read_addr_bank1  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[13:2]  : {1'd1, dma_rdwr_addr[12:2]})), 
+    .fft_rd_addr_bank1((~transform_rst) ? fft_read_addr_bank1  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[LOGN:2]  : {1'd1, dma_rdwr_addr[LOGN-1:2]})), 
     .fft_wr_addr_bank1((~transform_rst) ? fft_write_addr_bank1 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank1 : ext_write_addr_bank1),
     .fft_rd_data_bank1(fft_rd_data_bank1), 
     .fft_wr_data_bank1((~transform_rst) ? fft_wr_data_bank1    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank1    : ext_wr_data_bank1),
@@ -315,8 +319,8 @@ wire rns_m_wea_bank0, rns_m_wea_bank1;
 NTTPolyBank ntt_msg_bank0(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1])))),
-    .addrb(~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1])))), 
+    .addra(~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))),
+    .addrb(~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
     .dina( ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))), 
     .doutb(ntt_m_rd_data_bank0), 
     .wea(  ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0))))
@@ -324,8 +328,8 @@ NTTPolyBank ntt_msg_bank0(
 NTTPolyBank ntt_msg_bank1(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1])))), 
-    .addrb(~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1])))), 
+    .addra(~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
+    .addrb(~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
     .dina( ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))), 
     .doutb(ntt_m_rd_data_bank1), 
     .wea(  ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1))))
@@ -345,8 +349,8 @@ wire rns_v_wea_bank0, rns_v_wea_bank1;
 NTTPolyBank ntt_v_bank0(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1]))),
-    .addrb(~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1]))), 
+    .addra(~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))),
+    .addrb(~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))), 
     .dina( ~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))), 
     .doutb(ntt_v_rd_data_bank0), 
     .wea(  ~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0)))
@@ -354,8 +358,8 @@ NTTPolyBank ntt_v_bank0(
 NTTPolyBank ntt_v_bank1(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1]))),
-    .addrb(~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[12:1] : dma_rdwr_addr[12:1]))), 
+    .addra(~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))),
+    .addrb(~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))), 
     .dina( ~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))), 
     .doutb(ntt_v_rd_data_bank1), 
     .wea(  ~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1)))
@@ -375,8 +379,8 @@ wire rns_e1_wea_bank0, rns_e1_wea_bank1;
 NTTPolyBank ntt_e1_bank0(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_e1_write_addr_bank0 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank0 : ext_rdwr_addr[12:1])),
-    .addrb(~transform_rst ? ntt_e1_read_addr_bank0  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank0  : ext_rdwr_addr[12:1])), 
+    .addra(~transform_rst ? ntt_e1_write_addr_bank0 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank0 : ext_rdwr_addr[LOGN-1:1])),
+    .addrb(~transform_rst ? ntt_e1_read_addr_bank0  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank0  : ext_rdwr_addr[LOGN-1:1])), 
     .dina( ~transform_rst ? ntt_e1_wr_data_bank0    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank0    : dina_ext[LOGQ-1:0])), 
     .doutb(ntt_e1_rd_data_bank0), 
     .wea(  ~transform_rst ? ntt_e1_wea_bank0        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank0        : ntt_e1_ext_wea_bank0))
@@ -384,8 +388,8 @@ NTTPolyBank ntt_e1_bank0(
 NTTPolyBank ntt_e1_bank1(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~transform_rst ? ntt_e1_write_addr_bank1 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank1 : ext_rdwr_addr[12:1])),
-    .addrb(~transform_rst ? ntt_e1_read_addr_bank1  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank1  : ext_rdwr_addr[12:1])), 
+    .addra(~transform_rst ? ntt_e1_write_addr_bank1 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank1 : ext_rdwr_addr[LOGN-1:1])),
+    .addrb(~transform_rst ? ntt_e1_read_addr_bank1  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank1  : ext_rdwr_addr[LOGN-1:1])), 
     .dina( ~transform_rst ? ntt_e1_wr_data_bank1    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank1    : dina_ext[LOGQ-1:0])), 
     .doutb(ntt_e1_rd_data_bank1), 
     .wea(  ~transform_rst ? ntt_e1_wea_bank1        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank1        : ntt_e1_ext_wea_bank1))
@@ -401,8 +405,8 @@ wire pwm_key_wea_bank0, pwm_key_wea_bank1;
 NTTPolyBank ntt_key_bank0(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~pwm_rst ? pwm_key_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[12:1]   : dma_rdwr_addr[12:1])),
-    .addrb(~pwm_rst ? pwm_key_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[12:1]   : dma_rdwr_addr[12:1])), 
+    .addra(~pwm_rst ? pwm_key_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])),
+    .addrb(~pwm_rst ? pwm_key_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])), 
     .dina( ~pwm_rst ? pwm_key_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0])), 
     .doutb(ntt_key_rd_data_bank0), 
     .wea(  ~pwm_rst ? pwm_key_wea_bank0        : (grant_ext ? ntt_key_ext_wea_bank0 : ntt_key_dma_wea_bank0))
@@ -410,8 +414,8 @@ NTTPolyBank ntt_key_bank0(
 NTTPolyBank ntt_key_bank1(
     .clka(clk), 
     .clkb(clk), 
-    .addra(~pwm_rst ? pwm_key_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[12:1]   : dma_rdwr_addr[12:1])),
-    .addrb(~pwm_rst ? pwm_key_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[12:1]   : dma_rdwr_addr[12:1])), 
+    .addra(~pwm_rst ? pwm_key_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])),
+    .addrb(~pwm_rst ? pwm_key_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])), 
     .dina( ~pwm_rst ? pwm_key_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0])), 
     .doutb(ntt_key_rd_data_bank1), 
     .wea(  ~pwm_rst ? pwm_key_wea_bank1        : (grant_ext ? ntt_key_ext_wea_bank1 : ntt_key_dma_wea_bank1))
@@ -483,7 +487,8 @@ wire [23:0] rns_significant_low;
 wire [LOGQ-1:0] rns_mult_factor, rns_mult_result;
 UnifiedTransformation #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
-    .ADDR_WIDTH_ROM(9)
+    .ADDR_WIDTH_ROM(9),
+    .N(N)
   ) unified_transform (
     .clk(clk),
     .rst(transform_rst_3DP | transform_rst),
@@ -634,7 +639,7 @@ RNS #(
     .W(W),      // word-size of WL-Montgomery reduction in bits
     .L(3),       // number of stages in WL-Montgomery reduction
     .M(M),      // number of non-zero bits in modulus
-    .ROM_BASE_ADDR(39) // base address with metadata needed in this module
+    .ROM_BASE_ADDR(LOGN+26) // base address with metadata (=39 @N=8192; scales with the RNS-const ROM cache stride)
   ) rns (
     .clk(clk),
     .rst(rns_rst_3DP | rns_rst),

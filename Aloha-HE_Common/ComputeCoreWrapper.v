@@ -1,6 +1,11 @@
 `timescale 1ns / 1ps
 
-module ComputeCoreWrapper(clk, 
+module ComputeCoreWrapper #(
+    parameter FFT_ON_THE_FLY_GENERATION = 0,
+    parameter PROVIDE_DEBUG_IO = 0,
+    parameter LOGN = 13,
+    parameter N    = 1 << LOGN
+  ) (clk,
                     // AXI registers for controlling the co-processor
                     control_low_word, control_high_word, 
                     dina_ext_low_word, dina_ext_high_word, 
@@ -30,7 +35,7 @@ wire [63:0] dout_ext;
 reg [31:0] status;
 wire rst_core;
 
-wire [13:0] address_ext;
+wire [LOGN:0] address_ext;
 wire [2:0] bram_sel;
 wire wea_ext, grant_ext, wea_ext_core, wea_ext_ISA;
 
@@ -44,7 +49,7 @@ wire done_all_computation; // This becomes 1 when the cryptoprocessor has finish
 wire [31:0] status_wire;
 wire [30:0] cycle_count;
 
-assign address_ext = control_low_word[13:0];
+assign address_ext = control_low_word[LOGN:0];
 assign wea_ext = control_low_word[14];
 assign grant_ext = control_low_word[16];
 assign bram_sel = control_low_word[31:29];
@@ -56,8 +61,13 @@ assign wea_ext_core = (wea_ext==1'b1 & control_low_word[15]==1'b0) ? 1'b1 : 1'b0
 always @(posedge clk)
     status <= status_wire;
     
-ComputeCore CORE(
-    .clk(clk), 
+ComputeCore #(
+    .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
+    .PROVIDE_DEBUG_IO(PROVIDE_DEBUG_IO),
+    .LOGN(LOGN),
+    .N(N)
+  ) CORE(
+    .clk(clk),
     .rst(rst_core), 
     .address_ext(address_ext), 
     .bram_sel(bram_sel), 

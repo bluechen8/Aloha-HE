@@ -30,7 +30,7 @@ module Project #(
   always_ff @(posedge clk) begin
     if(rst) begin
       pos_ctr_DP <= 'd1;
-      dest_addr_DP <= 12'hffe;
+      dest_addr_DP <= (N/2) - 2;   // N=8192 -> 0xffe; sweeps all N/2 slots (wrapping)
     end else if(~done_internal_2DP) begin 
       pos_ctr_DP <= (pos_ctr_DP << 1) + pos_ctr_DP;
       dest_addr_DP <= dest_addr_DP + 'd1;
@@ -42,7 +42,7 @@ module Project #(
       done_internal_1DP <= 'd0;
       done_internal_2DP <= 'd0;
     end else begin
-      if(dest_addr_DP == 12'hffd)
+      if(dest_addr_DP == (N/2) - 3)   // N=8192 -> 0xffd (end of the N/2 sweep)
         done_internal_1DP <= 'd1;
       done_internal_2DP <= done_internal_1DP; 
     end
