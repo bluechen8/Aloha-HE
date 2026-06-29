@@ -17,7 +17,12 @@ module ComputeCore #(
   // core can be elaborated at small N for verification. The arithmetic is
   // N-generic; only loop terminals / address slices scale with LOGN.
   parameter LOGN = 13,
-  parameter N    = 1 << LOGN
+  parameter N    = 1 << LOGN,
+
+  // Encryption scheme select (Rung 6c): 0 = public-key (vendor PWM, the
+  // SEAL-golden validation reference); 1 = secret-key (PWMSk, the product
+  // datapath -- single multiply lane + negate-b + c1=a passthrough).
+  parameter SCHEME = 0
 //////////////////////////// Config End ////////////////////////////////////
 ) (clk, rst,
           address_ext, bram_sel, dina_ext, doutb_ext, wea_ext, // send64() and receive64() testing interface to software
@@ -117,6 +122,19 @@ assign transform_rst = opcode==3'd1 ? 1'b0 : 1'b1;
 wire do_fft, is_dif;
 assign is_dif = OP1[0];
 assign do_fft = OP1[1];
+
+// PWM negate-b flag (Rung 6c, sk-scheme only). Reuses OP1[0]; only consumed
+// when opcode==PWM (so it never collides with is_dif, which the transform
+// opcode owns). Setting it during PWM leaves random_sampling_rst asserted
+// (do_fft=0,is_dif=1 -> sampler held in reset), so no spurious sampling.
+wire pwm_negate;
+assign pwm_negate = OP1[0];
+// PWM encrypt flag (Rung 6c, sk-scheme only): 1 -> b operand from FFT_IM (the
+// freshly-sampled uniform a); 0 -> from NTT_KEY (loaded c1). Reuses OP1[1]
+// (do_fft, transform-only). With opcode==PWM, transform_rst=1 so the sampler
+// stays in reset regardless of this bit.
+wire pwm_enc;
+assign pwm_enc = OP1[1];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
@@ -718,50 +736,97 @@ assign pwm_m_wr_data_bank0   = pwm_c0_wr_data;
 assign pwm_m_wr_data_bank1   = pwm_c0_wr_data;
 assign pwm_key_wr_data_bank0 = pwm_c1_wr_data;
 assign pwm_key_wr_data_bank1 = pwm_c1_wr_data;
-PWM #(
-    .LOGQ(LOGQ),
-    .LOGN(LOGN),
-    .W(W),
-    .M(M)
-  ) pwm (
-    .clk(clk),
-    .rst(pwm_rst),
+generate
+if (SCHEME == 0) begin : g_pwm_pk
+  // Public-key PWM (vendor, unmodified): two multiply lanes (c0 and c1).
+  PWM #(
+      .LOGQ(LOGQ),
+      .LOGN(LOGN),
+      .W(W),
+      .M(M)
+    ) pwm (
+      .clk(clk),
+      .rst(pwm_rst),
 
-    .q_m(qm),
-    .current_k(current_k),
+      .q_m(qm),
+      .current_k(current_k),
 
-    // a bram read port:
-    .a_bram_rd_addr(pwm_a_rd_addr),
-    .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
+      // a bram read port:
+      .a_bram_rd_addr(pwm_a_rd_addr),
+      .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
 
-    // b bram read port:
-    .b_bram_rd_addr(pwm_b_rd_addr),
-    .b0_bram_rd_data(pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0),
-    .b1_bram_rd_data(fft_im_rd_data),
+      // b bram read port:
+      .b_bram_rd_addr(pwm_b_rd_addr),
+      .b0_bram_rd_data(pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0),
+      .b1_bram_rd_data(fft_im_rd_data),
 
-    // c bram read port:
-    .c_bram_rd_addr(pwm_c_rd_addr),
-    .c0_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0),
-    .c1_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_e1_rd_data_bank1 : ntt_e1_rd_data_bank0),
+      // c bram read port:
+      .c_bram_rd_addr(pwm_c_rd_addr),
+      .c0_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0),
+      .c1_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_e1_rd_data_bank1 : ntt_e1_rd_data_bank0),
 
-    // result bram write port:
-    .result_bram_wr_addr(pwm_result_wr_addr),
-    .result0_bram_wr_data(pwm_c0_wr_data),
-    .result1_bram_wr_data(pwm_c1_wr_data),
-    .result_bram_wea(pwm_r_wea),
+      // result bram write port:
+      .result_bram_wr_addr(pwm_result_wr_addr),
+      .result0_bram_wr_data(pwm_c0_wr_data),
+      .result1_bram_wr_data(pwm_c1_wr_data),
+      .result_bram_wea(pwm_r_wea),
 
-    // connection for NTT BF
-    .pwm_bf0_ina(pwm_bf0_ina),
-    .pwm_bf0_inb(pwm_bf0_inb),
-    .pwm_bf0_tw(pwm_bf0_tw),
-    .pwm_bf0_result(pwm_bf0_result),
-    .pwm_bf1_ina(pwm_bf1_ina),
-    .pwm_bf1_inb(pwm_bf1_inb),
-    .pwm_bf1_tw(pwm_bf1_tw),
-    .pwm_bf1_result(pwm_bf1_result),
+      // connection for NTT BF
+      .pwm_bf0_ina(pwm_bf0_ina),
+      .pwm_bf0_inb(pwm_bf0_inb),
+      .pwm_bf0_tw(pwm_bf0_tw),
+      .pwm_bf0_result(pwm_bf0_result),
+      .pwm_bf1_ina(pwm_bf1_ina),
+      .pwm_bf1_inb(pwm_bf1_inb),
+      .pwm_bf1_tw(pwm_bf1_tw),
+      .pwm_bf1_result(pwm_bf1_result),
 
-    .done(pwm_done)
-  );
+      .done(pwm_done)
+    );
+end else begin : g_pwm_sk
+  // Secret-key PWM (Rung 6c): single multiply lane (BF0) + negate-b + c1=a
+  // passthrough. Drops the b1(FFT_IM)/c1(NTT_E1) reads and BF1 -- tie BF1 off.
+  assign pwm_bf1_ina = {LOGQ{1'b0}};
+  assign pwm_bf1_inb = {LOGQ{1'b0}};
+  assign pwm_bf1_tw  = {LOGQ{1'b0}};
+  PWMSk #(
+      .LOGQ(LOGQ),
+      .LOGN(LOGN),
+      .W(W),
+      .M(M)
+    ) pwm (
+      .clk(clk),
+      .rst(pwm_rst),
+
+      .q_m(qm),
+      .current_k(current_k),
+      .negate(pwm_negate),
+      .enc(pwm_enc),
+
+      .a_bram_rd_addr(pwm_a_rd_addr),
+      .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
+
+      .b_bram_rd_addr(pwm_b_rd_addr),
+      .b0_bram_rd_data(pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0),
+      .b1_bram_rd_data(fft_im_rd_data),
+
+      .c_bram_rd_addr(pwm_c_rd_addr),
+      .c0_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0),
+
+      .result_bram_wr_addr(pwm_result_wr_addr),
+      .result0_bram_wr_data(pwm_c0_wr_data),
+      .result1_bram_wr_data(pwm_c1_wr_data),
+      .result_bram_wea(pwm_r_wea),
+
+      .pwm_bf0_ina(pwm_bf0_ina),
+      .pwm_bf0_inb(pwm_bf0_inb),
+      .pwm_bf0_tw(pwm_bf0_tw),
+      .pwm_bf0_result(pwm_bf0_result),
+
+      .done(pwm_done)
+    );
+end
+endgenerate
 
 /******************** PRNG and Sampling unit ***************/
 wire [LOGN-1:0] sampled_e0_bram_wr_addr,sampled_e1_bram_wr_addr, sampled_v_bram_wr_addr;

@@ -4,7 +4,8 @@ module ComputeCoreWrapper #(
     parameter FFT_ON_THE_FLY_GENERATION = 0,
     parameter PROVIDE_DEBUG_IO = 0,
     parameter LOGN = 13,
-    parameter N    = 1 << LOGN
+    parameter N    = 1 << LOGN,
+    parameter SCHEME = 0   // 0 = public-key (vendor PWM ref); 1 = secret-key (PWMSk)
   ) (clk,
                     // AXI registers for controlling the co-processor
                     control_low_word, control_high_word, 
@@ -65,7 +66,8 @@ ComputeCore #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
     .PROVIDE_DEBUG_IO(PROVIDE_DEBUG_IO),
     .LOGN(LOGN),
-    .N(N)
+    .N(N),
+    .SCHEME(SCHEME)
   ) CORE(
     .clk(clk),
     .rst(rst_core), 
