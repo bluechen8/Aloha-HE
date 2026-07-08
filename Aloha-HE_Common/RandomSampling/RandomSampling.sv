@@ -10,9 +10,12 @@ module RandomSampling #(
   )
   (
     input clk,
-    input rst,
+    input rst,           // per-sampling-pass reset (resets the sampling FSM/counters)
     input sample_errors, // 1 -> sample e0, e1, v; 0 -> sample pk1
 
+    // C'-2 free-run PRNG controls (decoupled from the per-pass `rst`):
+    input prng_rst,      // power-on/global reset for the Trivium (NOT pulsed per pass)
+    input reseed,        // pulse to (re)load `seed` into the Trivium + re-warm
     input [63:0] seed,
     input [3:0] current_k,
     input [M-1:0] qm,
@@ -125,9 +128,16 @@ module RandomSampling #(
   // PRNG instance:
   logic [63:0] random_out;
   logic random_valid;
+  // C'-2 free-run: the Trivium is reset only on prng_rst (power-on) and reloaded
+  // only on `reseed` -- NOT on the per-pass `rst`.  `active = ~rst` freezes the
+  // stream between passes (state held) and advances it only while THIS pass is
+  // consuming, so the keystream is continuous across passes (fresh a/e0 that
+  // never repeat) while a reseed still lands the sampler back at word0.
   TriviumAdapter trivium_adapter(
     .clk(clk),
-    .rst(rst),
+    .rst(prng_rst),
+    .reseed(reseed),
+    .active(~rst),
     .seed(seed),
     .random_out(random_out),
     .random_valid(random_valid));

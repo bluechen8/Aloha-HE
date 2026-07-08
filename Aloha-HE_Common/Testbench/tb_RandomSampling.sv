@@ -65,11 +65,31 @@ integer i, fd, fd_ref;
   
   logic [63:0] seed;
   logic sample_errors = 'd1;
+
+  // C'-2 free-run PRNG control, mirroring ComputeCore: RandomSampling.rst is a
+  // registered per-pass reset (rst_1DP); `reseed` fires on its release edge
+  // (rst_2DP & ~rst_1DP), the same instant the per-pass-reload adapter used to
+  // reload -- so `seed` is already valid and no stale word is consumed. prng_rst
+  // is a power-on one-shot (the Trivium is NOT reset per pass).
+  logic prng_rst = 1'b1;
+  logic rst_1DP = 1'b1, rst_2DP = 1'b1;
+  always @(posedge clk) begin
+    rst_1DP <= rst;
+    rst_2DP <= rst_1DP;
+  end
+  wire reseed = rst_2DP & ~rst_1DP;
+  initial begin
+    repeat (3) @(posedge clk);
+    prng_rst = 1'b0;
+  end
+
   RandomSampling #(.LOGN(LOGN)) dut (
     .clk(clk),
-    .rst(rst),
+    .rst(rst_1DP),
     .sample_errors(sample_errors),
 
+    .prng_rst(prng_rst),
+    .reseed(reseed),
     .seed(seed),
     .current_k(current_k),
     .qm(qm),

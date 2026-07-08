@@ -25,6 +25,7 @@ module ComputeCore #(
   parameter SCHEME = 0
 //////////////////////////// Config End ////////////////////////////////////
 ) (clk, rst,
+          reseed_en, prng_rst_i,                               // C'-2 free-run PRNG controls (see below)
           address_ext, bram_sel, dina_ext, doutb_ext, wea_ext, // send64() and receive64() testing interface to software
 					command_in, command_we,                              // current instruction to execute
 					done_ins_computation,                                // instruction computation finished
@@ -62,7 +63,17 @@ localparam DMA_FFT_BRAM_ID = 2'd3;
 
 
 
-input clk, rst; 
+input clk, rst;
+// C'-2 free-run PRNG controls (default-tie for legacy: reseed_en=1, prng_rst_i=rst):
+//   reseed_en  - 1 => this sampling pass reloads the Trivium from `seed` (the
+//                per-pass-reload default, keystream restarts at word0). 0 => the
+//                Trivium free-runs (no reload), so the keystream CONTINUES across
+//                passes -> fresh a/e0 that never repeat. Driven per-pass by the walker.
+//   prng_rst_i - power-on/zeroize reset for the sampler Trivium ONLY, DECOUPLED from
+//                the per-EXE core `rst`. The walker pulses `rst` at every EXE; tying
+//                the Trivium reset to that would wipe its state before every pass and
+//                make free-run impossible, so the Trivium reset is a separate input.
+input reseed_en, prng_rst_i;
 input [LOGN:0] address_ext; // SW-facing address: LOGN+1 bits spans the 2N coefficient space
 input [2:0] bram_sel;
 input [63:0] dina_ext;
@@ -842,11 +853,37 @@ always @(posedge clk) begin
     random_sampling_rst_1DP <= random_sampling_rst;
 end
 
+// C'-2 free-run PRNG reseed pulse.  Default policy = reseed every sampling pass,
+// which reproduces the pre-C'-2 per-pass-reload keystream (each pass restarts
+// from its `seed`) so the standalone sampler/round-trip goldens are unchanged.
+// A 1-cycle pulse at the pass-release edge (random_sampling_rst_1DP 1->0), where
+// `random_sampling_seed` is already valid (same instant the retired per-pass
+// adapter reloaded).  The adapter masks its `random_valid` on this pulse so no
+// stale word is consumed, then re-warms and resumes at word0.  Activating true
+// free-run (SUPPRESS this pulse for a/e0 passes; inject a CSRNG-sourced seed
+// after keygen) is a later walker (fhe_microseq) step: it will thread a
+// reseed-enable + seed-select control down through ComputeCoreWrapper to gate
+// this pulse and pick the seed source. Until then this default reseeds every pass.
+reg random_sampling_rst_2DP;
+always @(posedge clk) begin
+  if(rst)
+    random_sampling_rst_2DP <= 1;
+  else
+    random_sampling_rst_2DP <= random_sampling_rst_1DP;
+end
+wire random_sampling_reseed;
+// Gate the per-pass reseed pulse with reseed_en: when the walker drops reseed_en
+// for a/e0 passes, no reload fires and the Trivium free-runs. Default (reseed_en=1)
+// reseeds every pass, reproducing the pre-C'-2 keystream.
+assign random_sampling_reseed = (random_sampling_rst_2DP & ~random_sampling_rst_1DP) & reseed_en;
+
 RandomSampling #(.LOGN(LOGN),.LOGQ(54),.M(17),.W(24)) random_sampling (
     .clk(clk),
     .rst(random_sampling_rst_1DP),
     .sample_errors(sample_errors),
 
+    .prng_rst(prng_rst_i),             // Trivium reset DECOUPLED from per-EXE core rst
+    .reseed(random_sampling_reseed),   // per-pass reseed (gated by reseed_en)
     .seed(random_sampling_seed),
     .current_k(current_k),
     .qm(qm),

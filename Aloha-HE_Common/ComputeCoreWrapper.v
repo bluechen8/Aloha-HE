@@ -7,8 +7,9 @@ module ComputeCoreWrapper #(
     parameter N    = 1 << LOGN,
     parameter SCHEME = 0   // 0 = public-key (vendor PWM ref); 1 = secret-key (PWMSk)
   ) (clk,
+                    reseed_en, prng_rst_i,   // C'-2 free-run PRNG controls (pass-through to CORE)
                     // AXI registers for controlling the co-processor
-                    control_low_word, control_high_word, 
+                    control_low_word, control_high_word,
                     dina_ext_low_word, dina_ext_high_word, 
                     dout_ext_low_word, dout_ext_high_word, 
                     status,
@@ -19,6 +20,7 @@ module ComputeCoreWrapper #(
                     dma_bram_doutb, 
                     dma_bram_en);
 input clk;
+input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
 input [31:0] control_low_word, control_high_word;
 input [31:0] dina_ext_low_word, dina_ext_high_word;
 
@@ -70,7 +72,9 @@ ComputeCore #(
     .SCHEME(SCHEME)
   ) CORE(
     .clk(clk),
-    .rst(rst_core), 
+    .rst(rst_core),
+    .reseed_en(reseed_en),
+    .prng_rst_i(prng_rst_i),
     .address_ext(address_ext), 
     .bram_sel(bram_sel), 
     .dina_ext(dina_ext), 
