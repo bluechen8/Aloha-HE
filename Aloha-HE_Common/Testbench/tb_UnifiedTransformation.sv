@@ -65,6 +65,12 @@ module tb_UnifiedTransformation #(
   logic [2*`OVERALL_BITS-1:0] tw_rom_data;
   FFTTw_RNS_ROM tw_rom (.clka(clk), .addra(tw_rom_addr), .douta(tw_rom_data));
 
+  // C'-3: stored FFT-twiddle ROM lifted out of UnifiedTransformation; supply it
+  // here (needed for FFT_stored mode). Declared BEFORE the dut port map.
+  wire [$clog2(N)-2:0] ftw_rom_addr_w;
+  wire [127:0]         ftw_rom_data_w;
+  FFTAllTwiddleROM ftw_rom_inst (.clka(clk & enable_clk), .addra(ftw_rom_addr_w), .douta(ftw_rom_data_w));
+
   logic [ADDR_WIDTH:0] base_address,res_base_addr,res_gap,ref_base_addr,ref_gap;
   logic [ADDR_WIDTH:0] gap, m, j, offset;
   logic is_forward_transform, stall, stage_done, enable_clk;
@@ -139,6 +145,8 @@ module tb_UnifiedTransformation #(
     // tw factor rom:
     .tw_rom_addr(tw_rom_addr),
     .tw_rom_data(tw_rom_data),
+    .ftw_rom_addr(ftw_rom_addr_w),
+    .ftw_rom_data(ftw_rom_data_w),
 
     .rst_pwm(1'd1),
     .pwm_bf0_ina(),

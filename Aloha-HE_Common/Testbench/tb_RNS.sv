@@ -188,6 +188,9 @@ module tb_RNS #(parameter N = 8192)();
   logic [16:0] qm;
   // We need the UniformTransformation here for its NTT Butterflies and NTT Twiddle factor generation 
   UnifiedTransformation #(.N(N)) unif_transf (
+    // C'-3: on-the-fly twiddle mode here -> lifted stored-ROM port unused.
+    .ftw_rom_addr(),
+    .ftw_rom_data(128'd0),
     .clk(clk),
     .rst(1'd1),
     .is_dif(),

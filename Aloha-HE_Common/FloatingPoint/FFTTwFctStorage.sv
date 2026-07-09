@@ -14,7 +14,11 @@ module FFTTwFctStorage #(
     input i_loop_done,
 
     output [`OVERALL_BITS-1:0] tw_real,
-    output [`OVERALL_BITS-1:0] tw_imag
+    output [`OVERALL_BITS-1:0] tw_imag,
+
+    // C'-3: stored FFT-twiddle ROM lifted to the top.
+    output [LOGN-2:0] ftw_rom_addr,
+    input  [2*`OVERALL_BITS-1:0] ftw_rom_data
   );
 
   localparam ROM_RD_LAT = 2;
@@ -29,7 +33,9 @@ module FFTTwFctStorage #(
   ////////////// Twiddle factor ROM: //////////////
   logic [LOGN-2:0] rom_addr; // twiddle ROM holds N/2 entries
   logic [2*`OVERALL_BITS-1:0] rom_data;
-  FFTAllTwiddleROM all_twiddle_rom (.clka(clk), .addra(rom_addr), .douta(rom_data));
+  // C'-3: ROM lifted to top -- was FFTAllTwiddleROM all_twiddle_rom(...).
+  assign ftw_rom_addr = rom_addr;
+  assign rom_data = ftw_rom_data;
 
   logic negate_real, negate_imag, negate_real_delayed, negate_imag_delayed;
   DelayRegister #(.CYCLE_COUNT(ROM_RD_LAT), .BITWIDTH(1)) negate_real_delay (.clk(clk), .in(negate_real), .out(negate_real_delayed)); 

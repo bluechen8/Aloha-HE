@@ -110,6 +110,11 @@ module UnifiedTransformation #(
     input [LOGQ_MAX-1:0] rns_mult_factor,
     output [LOGQ_MAX-1:0] rns_mult_result,
 
+    // C'-3: stored FFT-twiddle ROM lifted to the top (pass-through from
+    // FFTTwFctStorage). Only live when FFT_ON_THE_FLY_GENERATION=0.
+    output [ADDR_WIDTH-1:0] ftw_rom_addr,
+    input  [2*`OVERALL_BITS-1:0] ftw_rom_data,
+
     output done
   );
   
@@ -254,6 +259,7 @@ module UnifiedTransformation #(
   if (FFT_ON_THE_FLY_GENERATION) begin
     assign tw_real = tw_real_gen;
     assign tw_imag = tw_imag_gen;
+    assign ftw_rom_addr = '0;   // C'-3: stored-twiddle ROM unused in this mode
   end else begin
     FFTTwFctStorage #(.LOGN(ADDR_WIDTH+1)) tw_fct_storage
     (
@@ -264,7 +270,9 @@ module UnifiedTransformation #(
       .i(i_DP),
       .i_loop_done(i_loop_done),
       .tw_real(tw_real),
-      .tw_imag(tw_imag)
+      .tw_imag(tw_imag),
+      .ftw_rom_addr(ftw_rom_addr),   // C'-3: ROM lifted to top
+      .ftw_rom_data(ftw_rom_data)
     );
   end
 

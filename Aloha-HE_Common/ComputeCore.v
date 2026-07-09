@@ -30,7 +30,8 @@ module ComputeCore #(
 					command_in, command_we,                              // current instruction to execute
 					done_ins_computation,                                // instruction computation finished
 					grant_ext_io,                                        // grant BRAM access to send64/receive64 or to DMA
-          dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en // DMA interface
+          dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en, // DMA interface
+          m_aloha_mem                                          // C'-3: storage banks lifted to top (SyncReadMem)
 					);
 
 
@@ -89,6 +90,13 @@ input [17:0] dma_bram_abs_addr;
 input [63:0] dina_dma;
 output [63:0] doutb_dma;
 input dma_bram_en;
+
+// C'-3 SRAM-macro routing: the storage banks that used to be instantiated in
+// this module are lifted out to the caliptra_top / CaliptraCoreBlackbox
+// boundary (real SRAM on the Chisel side). This module now only drives the
+// bank REQUESTS and reads the bank data back through the interface; the
+// request-select muxes below are unchanged.
+fhe_aloha_mem_if.req m_aloha_mem;
 
 // DMA signals:
 wire wea_dma;
@@ -345,24 +353,17 @@ wire [LOGQ-1:0] pwm_m_wr_data_bank0, pwm_m_wr_data_bank1;
 wire pwm_m_wea_bank0, pwm_m_wea_bank1;
 wire ntt_m_wea_bank0, ntt_m_wea_bank1;
 wire rns_m_wea_bank0, rns_m_wea_bank1;
-NTTPolyBank ntt_msg_bank0(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))),
-    .addrb(~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
-    .dina( ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))), 
-    .doutb(ntt_m_rd_data_bank0), 
-    .wea(  ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0))))
-    );
-NTTPolyBank ntt_msg_bank1(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
-    .addrb(~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))), 
-    .dina( ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))), 
-    .doutb(ntt_m_rd_data_bank1), 
-    .wea(  ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1))))
-    );
+// C'-3: ntt_msg banks lifted to top (was NTTPolyBank ntt_msg_bank0/1).
+assign m_aloha_mem.ntt_msg0_addra = ~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_msg0_addrb = ~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_msg0_dina  = ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign m_aloha_mem.ntt_msg0_wea   = ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0)));
+assign ntt_m_rd_data_bank0 = m_aloha_mem.ntt_msg0_doutb;
+assign m_aloha_mem.ntt_msg1_addra = ~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_msg1_addrb = ~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_msg1_dina  = ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign m_aloha_mem.ntt_msg1_wea   = ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1)));
+assign ntt_m_rd_data_bank1 = m_aloha_mem.ntt_msg1_doutb;
 
 
 // NTT BRAMs v (Modular Ring BRAM 2):
@@ -375,24 +376,17 @@ wire [LOGQ-1:0] rns_v_wr_data_bank0, rns_v_wr_data_bank1;
 wire [LOGQ-1:0] ntt_v_rd_data_bank0, ntt_v_rd_data_bank1;
 wire ntt_v_wea_bank0, ntt_v_wea_bank1;
 wire rns_v_wea_bank0, rns_v_wea_bank1;
-NTTPolyBank ntt_v_bank0(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))),
-    .addrb(~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))), 
-    .dina( ~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))), 
-    .doutb(ntt_v_rd_data_bank0), 
-    .wea(  ~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0)))
-    );
-NTTPolyBank ntt_v_bank1(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))),
-    .addrb(~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))), 
-    .dina( ~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))), 
-    .doutb(ntt_v_rd_data_bank1), 
-    .wea(  ~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1)))
-    );
+// C'-3: ntt_v banks lifted to top (was NTTPolyBank ntt_v_bank0/1).
+assign m_aloha_mem.ntt_v0_addra = ~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v0_addrb = ~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v0_dina  = ~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]));
+assign m_aloha_mem.ntt_v0_wea   = ~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0));
+assign ntt_v_rd_data_bank0 = m_aloha_mem.ntt_v0_doutb;
+assign m_aloha_mem.ntt_v1_addra = ~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v1_addrb = ~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v1_dina  = ~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]));
+assign m_aloha_mem.ntt_v1_wea   = ~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1));
+assign ntt_v_rd_data_bank1 = m_aloha_mem.ntt_v1_doutb;
 
 
 // NTT BRAMs e1 (Modular Ring BRAM 1):
@@ -405,24 +399,40 @@ wire [LOGQ-1:0] rns_e1_wr_data_bank0, rns_e1_wr_data_bank1;
 wire [LOGQ-1:0] ntt_e1_rd_data_bank0, ntt_e1_rd_data_bank1;
 wire ntt_e1_wea_bank0, ntt_e1_wea_bank1;
 wire rns_e1_wea_bank0, rns_e1_wea_bank1;
-NTTPolyBank ntt_e1_bank0(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_e1_write_addr_bank0 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank0 : ext_rdwr_addr[LOGN-1:1])),
-    .addrb(~transform_rst ? ntt_e1_read_addr_bank0  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank0  : ext_rdwr_addr[LOGN-1:1])), 
-    .dina( ~transform_rst ? ntt_e1_wr_data_bank0    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank0    : dina_ext[LOGQ-1:0])), 
-    .doutb(ntt_e1_rd_data_bank0), 
-    .wea(  ~transform_rst ? ntt_e1_wea_bank0        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank0        : ntt_e1_ext_wea_bank0))
-    );
-NTTPolyBank ntt_e1_bank1(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~transform_rst ? ntt_e1_write_addr_bank1 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank1 : ext_rdwr_addr[LOGN-1:1])),
-    .addrb(~transform_rst ? ntt_e1_read_addr_bank1  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank1  : ext_rdwr_addr[LOGN-1:1])), 
-    .dina( ~transform_rst ? ntt_e1_wr_data_bank1    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank1    : dina_ext[LOGQ-1:0])), 
-    .doutb(ntt_e1_rd_data_bank1), 
-    .wea(  ~transform_rst ? ntt_e1_wea_bank1        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank1        : ntt_e1_ext_wea_bank1))
-    );
+// C'-3 NTT_E1 bank drop: the e1 poly is never produced or consumed on the
+// secret-key datapath (PWMSk reads b1/c1 from FFT_IM/NTT_KEY, not NTT_E1;
+// the UnifiedTransformation e1 lane still writes/reads these banks in parallel
+// but its result feeds nothing in SCHEME==1). So the two NTT_E1 storage banks
+// are instantiated ONLY for the pk reference path (SCHEME==0) and dropped for
+// the sk product path (SCHEME==1), where ntt_e1_rd_data is tied to 0. This is a
+// pure storage (SRAM-macro) win; the datapath is byte-unchanged.
+generate
+if (SCHEME == 0) begin : g_ntt_e1_bank
+// C'-3: ntt_e1 banks lifted to top (pk reference path only).
+assign m_aloha_mem.ntt_e1_0_addra = ~transform_rst ? ntt_e1_write_addr_bank0 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank0 : ext_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_e1_0_addrb = ~transform_rst ? ntt_e1_read_addr_bank0  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank0  : ext_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_e1_0_dina  = ~transform_rst ? ntt_e1_wr_data_bank0    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank0    : dina_ext[LOGQ-1:0]);
+assign m_aloha_mem.ntt_e1_0_wea   = ~transform_rst ? ntt_e1_wea_bank0        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank0        : ntt_e1_ext_wea_bank0);
+assign ntt_e1_rd_data_bank0 = m_aloha_mem.ntt_e1_0_doutb;
+assign m_aloha_mem.ntt_e1_1_addra = ~transform_rst ? ntt_e1_write_addr_bank1 : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_write_addr_bank1 : ext_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_e1_1_addrb = ~transform_rst ? ntt_e1_read_addr_bank1  : (~pwm_rst || !PROVIDE_DEBUG_IO ? pwm_e1_read_addr_bank1  : ext_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_e1_1_dina  = ~transform_rst ? ntt_e1_wr_data_bank1    : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wr_data_bank1    : dina_ext[LOGQ-1:0]);
+assign m_aloha_mem.ntt_e1_1_wea   = ~transform_rst ? ntt_e1_wea_bank1        : (~rns_rst || !PROVIDE_DEBUG_IO ? rns_e1_wea_bank1        : ntt_e1_ext_wea_bank1);
+assign ntt_e1_rd_data_bank1 = m_aloha_mem.ntt_e1_1_doutb;
+end else begin : g_ntt_e1_drop
+// C'-3: NTT_E1 dropped on the sk product path -- tie the lifted req off.
+assign m_aloha_mem.ntt_e1_0_addra = '0;
+assign m_aloha_mem.ntt_e1_0_addrb = '0;
+assign m_aloha_mem.ntt_e1_0_dina  = '0;
+assign m_aloha_mem.ntt_e1_0_wea   = 1'b0;
+assign m_aloha_mem.ntt_e1_1_addra = '0;
+assign m_aloha_mem.ntt_e1_1_addrb = '0;
+assign m_aloha_mem.ntt_e1_1_dina  = '0;
+assign m_aloha_mem.ntt_e1_1_wea   = 1'b0;
+assign ntt_e1_rd_data_bank0 = '0;
+assign ntt_e1_rd_data_bank1 = '0;
+end
+endgenerate
 
 
 // NTT BRAMs key (Modular Ring BRAM 3):
@@ -431,24 +441,17 @@ wire [LOGN-2:0] pwm_key_write_addr_bank0, pwm_key_write_addr_bank1;
 wire [LOGQ-1:0] ntt_key_rd_data_bank0, ntt_key_rd_data_bank1;
 wire [LOGQ-1:0] pwm_key_wr_data_bank0, pwm_key_wr_data_bank1;
 wire pwm_key_wea_bank0, pwm_key_wea_bank1;
-NTTPolyBank ntt_key_bank0(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~pwm_rst ? pwm_key_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])),
-    .addrb(~pwm_rst ? pwm_key_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])), 
-    .dina( ~pwm_rst ? pwm_key_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0])), 
-    .doutb(ntt_key_rd_data_bank0), 
-    .wea(  ~pwm_rst ? pwm_key_wea_bank0        : (grant_ext ? ntt_key_ext_wea_bank0 : ntt_key_dma_wea_bank0))
-    );
-NTTPolyBank ntt_key_bank1(
-    .clka(clk), 
-    .clkb(clk), 
-    .addra(~pwm_rst ? pwm_key_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])),
-    .addrb(~pwm_rst ? pwm_key_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1])), 
-    .dina( ~pwm_rst ? pwm_key_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0])), 
-    .doutb(ntt_key_rd_data_bank1), 
-    .wea(  ~pwm_rst ? pwm_key_wea_bank1        : (grant_ext ? ntt_key_ext_wea_bank1 : ntt_key_dma_wea_bank1))
-    );
+// C'-3: ntt_key banks lifted to top (was NTTPolyBank ntt_key_bank0/1).
+assign m_aloha_mem.ntt_key0_addra = ~pwm_rst ? pwm_key_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_key0_addrb = ~pwm_rst ? pwm_key_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_key0_dina  = ~pwm_rst ? pwm_key_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0]);
+assign m_aloha_mem.ntt_key0_wea   = ~pwm_rst ? pwm_key_wea_bank0        : (grant_ext ? ntt_key_ext_wea_bank0 : ntt_key_dma_wea_bank0);
+assign ntt_key_rd_data_bank0 = m_aloha_mem.ntt_key0_doutb;
+assign m_aloha_mem.ntt_key1_addra = ~pwm_rst ? pwm_key_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_key1_addrb = ~pwm_rst ? pwm_key_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
+assign m_aloha_mem.ntt_key1_dina  = ~pwm_rst ? pwm_key_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0]);
+assign m_aloha_mem.ntt_key1_wea   = ~pwm_rst ? pwm_key_wea_bank1        : (grant_ext ? ntt_key_ext_wea_bank1 : ntt_key_dma_wea_bank1);
+assign ntt_key_rd_data_bank1 = m_aloha_mem.ntt_key1_doutb;
 
 
 // Random polynomial BRAMs (Error Poly BRAM):
@@ -459,34 +462,43 @@ wire [5:0] e0_bram_wr_data,e1_bram_wr_data;
 wire [1:0] v_bram_wr_data;
 wire [5:0] e0_bram_rd_data,e1_bram_rd_data;
 wire [1:0] v_bram_rd_data;
-CBDPolyBRAM e0_bram(
-  .clka(clk),
-  .wea(e0_bram_wea),
-  .addra(~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
-  .dina(e0_bram_wr_data),
-  .douta(e0_bram_rd_data)
-  );
-CBDPolyBRAM e1_bram(
-  .clka(clk),
-  .wea(e1_bram_wea),
-  .addra(~random_sampling_rst ? e1_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e1_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
-  .dina(e1_bram_wr_data),
-  .douta(e1_bram_rd_data)
-  );
-TernaryPolyBRAM v_bram(
-  .clka(clk),
-  .wea(v_bram_wea),
-  .addra(~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[LOGN-1:0])),
-  .dina(v_bram_wr_data),
-  .douta(v_bram_rd_data)
-  );
+// C'-3: e0/e1/v single-port banks lifted to top (was CBDPolyBRAM/TernaryPolyBRAM).
+assign m_aloha_mem.e0_wea   = e0_bram_wea;
+assign m_aloha_mem.e0_addra = ~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
+assign m_aloha_mem.e0_dina  = e0_bram_wr_data;
+assign e0_bram_rd_data = m_aloha_mem.e0_douta;
+// C'-3: e1 ERROR sampler bank dropped on the sk product path (SCHEME==1), just
+// like NTT_E1. On the sk scheme c1=a is a plaintext passthrough with no second
+// error e1 and no second multiply, so e1_bram is write-only-dead: RandomSampling
+// still samples e1 but its only functional reader is the RNS e1-expansion, which
+// lands solely in the (dropped) ntt_e1 banks; PWMSk never reads it. Kept for the
+// pk reference path (SCHEME==0), where e1 is a real ciphertext component.
+generate
+if (SCHEME == 0) begin : g_e1_bram
+assign m_aloha_mem.e1_wea   = e1_bram_wea;
+assign m_aloha_mem.e1_addra = ~random_sampling_rst ? e1_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e1_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
+assign m_aloha_mem.e1_dina  = e1_bram_wr_data;
+assign e1_bram_rd_data = m_aloha_mem.e1_douta;
+end else begin : g_e1_bram_drop
+assign m_aloha_mem.e1_wea   = 1'b0;
+assign m_aloha_mem.e1_addra = '0;
+assign m_aloha_mem.e1_dina  = '0;
+assign e1_bram_rd_data = '0;
+end
+endgenerate
+assign m_aloha_mem.vt_wea   = v_bram_wea;
+assign m_aloha_mem.vt_addra = ~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
+assign m_aloha_mem.vt_dina  = v_bram_wr_data;
+assign v_bram_rd_data = m_aloha_mem.vt_douta;
 
 
 // Constants ROM:
 // contains the "Twiddle factor cache" for FFT and NTT twiddle factor generation and the RNS constants
 wire [8:0] transform_tw_rom_addr, rns_constant_rom_addr;
 wire [2*FLP_WORDSIZE-1:0] tw_rom_data;
-FFTTw_RNS_ROM constants_rom(.clka(clk), .addra((~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr), .douta(tw_rom_data));
+// C'-3: constants ROM lifted to top (was FFTTw_RNS_ROM constants_rom).
+assign m_aloha_mem.crom_addra = (~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr;
+assign tw_rom_data = m_aloha_mem.crom_douta;
 
 
 /******************** Unified Transformation Module ***************/
@@ -514,6 +526,12 @@ wire [LOGQ-1:0] pwm_bf0_ina, pwm_bf0_inb, pwm_bf0_tw, pwm_bf0_result, pwm_bf1_in
 wire [107:0] rns_significant;
 wire [23:0] rns_significant_low;
 wire [LOGQ-1:0] rns_mult_factor, rns_mult_result;
+// C'-3: declare the lifted twiddle-ROM address BEFORE it is used in the
+// UnifiedTransformation port map below. Aloha compiles under `default_nettype
+// wire, so a use-before-declaration would silently infer a 1-BIT implicit net
+// and truncate this 7-12 bit address to bit 0 (VCS did exactly that; Verilator
+// resolved against the explicit decl, hence the sim-only mismatch).
+wire [LOGN-2:0] ftw_rom_addr_lifted;
 UnifiedTransformation #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
     .ADDR_WIDTH_ROM(9),
@@ -614,8 +632,15 @@ UnifiedTransformation #(
     .rns_mult_factor(rns_mult_factor),
     .rns_mult_result(rns_mult_result),
 
+    // C'-3: stored FFT-twiddle ROM lifted to the top boundary; zero-extend the
+    // LOGN-1 bit addr into the fixed 12b interface signal via an assign.
+    .ftw_rom_addr(ftw_rom_addr_lifted),
+    .ftw_rom_data(m_aloha_mem.ftwrom_douta),
+
     .done(transformation_done)
   );
+  // C'-3: ftw_rom_addr_lifted declared above (before its use in the port map).
+  assign m_aloha_mem.ftwrom_addra = ftw_rom_addr_lifted;
 
 
 /******************** RNS Unit ***************/

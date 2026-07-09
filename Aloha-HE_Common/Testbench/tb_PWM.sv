@@ -74,12 +74,20 @@ module tb_PWM #(parameter N = 8192)();
   );
 
 
+  // C'-3: stored FFT-twiddle ROM lifted out of UnifiedTransformation; supply it
+  // here (declared before the transf port map).
+  wire [$clog2(N)-2:0] ftw_rom_addr_w;
+  wire [127:0]         ftw_rom_data_w;
+  FFTAllTwiddleROM ftw_rom_inst (.clka(clk), .addra(ftw_rom_addr_w), .douta(ftw_rom_data_w));
+
   UnifiedTransformation #(
     .FFT_ON_THE_FLY_GENERATION(0),
     .N(N)
   ) transf (
     .clk(clk),
     .rst(1),
+    .ftw_rom_addr(ftw_rom_addr_w),
+    .ftw_rom_data(ftw_rom_data_w),
 
     // modulus info for NTT
     .current_k(current_k),

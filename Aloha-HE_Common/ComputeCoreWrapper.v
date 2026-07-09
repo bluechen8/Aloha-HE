@@ -16,9 +16,10 @@ module ComputeCoreWrapper #(
                     // DMA interface: 
                     dma_bram_byte_wea, 
                     dma_bram_abs_addr, 
-                    dma_bram_dina, 
-                    dma_bram_doutb, 
-                    dma_bram_en);
+                    dma_bram_dina,
+                    dma_bram_doutb,
+                    dma_bram_en,
+                    m_aloha_mem);   // C'-3: Aloha storage banks lifted to top
 input clk;
 input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
 input [31:0] control_low_word, control_high_word;
@@ -32,6 +33,8 @@ input [17:0] dma_bram_abs_addr;
 input [63:0] dma_bram_dina;
 output [63:0] dma_bram_doutb;
 input dma_bram_en;
+
+fhe_aloha_mem_if.req m_aloha_mem;   // C'-3: pass-through to CORE
 
 wire [63:0] dina_ext = {dina_ext_high_word,dina_ext_low_word};
 wire [63:0] dout_ext;
@@ -86,9 +89,10 @@ ComputeCore #(
 		.grant_ext_io(grant_ext),
     .dma_bram_byte_wea(dma_bram_byte_wea), 
     .dma_bram_abs_addr(dma_bram_abs_addr), 
-    .dina_dma(dma_bram_dina), 
-    .doutb_dma(dma_bram_doutb), 
-    .dma_bram_en(dma_bram_en));
+    .dina_dma(dma_bram_dina),
+    .doutb_dma(dma_bram_doutb),
+    .dma_bram_en(dma_bram_en),
+    .m_aloha_mem(m_aloha_mem));
 
 
 assign rst_core = control_high_word[0];
