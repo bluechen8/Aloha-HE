@@ -174,6 +174,13 @@ wire random_sampling_rst;
 wire random_sampling_done;
 wire [63:0] random_sampling_seed;
 wire sample_errors; // true: sample e0, e1, v; false: sample pk1
+// FIXME(fhe-keygen-fp-split): the sampler is welded to a transform pass here
+// (released only when transform_rst=0, i.e. an FFT-DIF or NTT-fwd instruction),
+// which forces keygen to run FFT butterflies on a zeroed bank just to sample the
+// (integer) secret. For a clean no-FP keygen, add a sample-only decode that pulls
+// random_sampling_rst low WITHOUT starting UnifiedTransformation, and OR
+// random_sampling_done into done_ins_computation below. See the keygen microcode
+// FIXME in fhe_microseq.sv (KEYGEN program) for the full split + rationale.
 assign random_sampling_rst = (do_fft && is_dif) || (~do_fft && ~is_dif) ? transform_rst : 1'd1;
 assign random_sampling_seed = dina_ext;
 assign sample_errors = do_fft;
@@ -300,6 +307,9 @@ SharedFFTBrams #(
     .key_rd_data(fft_im_rd_data), 
     .key_wr_data((~random_sampling_rst || !PROVIDE_DEBUG_IO) ? fft_im_wr_data : dina_ext[LOGQ-1:0]),
     .key_wea(    (~random_sampling_rst || !PROVIDE_DEBUG_IO) ? fft_im_wea     : fft_im_ext_wea)
+`ifdef FHE_WALKER
+    , .m_fft_mem(m_aloha_mem)  // C'-3: 4 FFT working banks lifted to Chisel SyncReadMem
+`endif
   );
 
 // Expand and Project modules operating on FFT BRAM (Complex BRAM)

@@ -46,7 +46,14 @@ module MontRed_Stage #(
   if (T_HIGH_BITS < 48) begin // addition of T_high can be done inside DSP
     logic signed [OUTPUT_SIZE-1:0] result_DP;
     logic signed [W+M+1:0] t2_x_qm_p_th;
-    MontRed_DSP_MultAdd dsp_mult_add(.CLK(clk), .CARRYIN(c_in), .A({1'd0, T2}), .B({1'd1,q_m}), .C({'d0, T_high}), .P(t2_x_qm_p_th));
+    // Width-explicit DSP hookup (bit-identical to the original, but clean under
+    // VCS -error=PCWM-L): C = T_high zero-extended to the 48-bit DSP C port (the
+    // old `{'d0, T_high}` was a 32-bit unsized zero concat that Vivado/Verilator
+    // silently truncated to 48); P is the full 48-bit DSP output, of which the
+    // low W+M+2 bits are kept exactly as before.
+    logic signed [47:0] dsp_p_full;
+    MontRed_DSP_MultAdd dsp_mult_add(.CLK(clk), .CARRYIN(c_in), .A({1'd0, T2}), .B({1'd1,q_m}), .C(48'(T_high)), .P(dsp_p_full));
+    assign t2_x_qm_p_th = dsp_p_full[W+M+1:0];
 
     logic [W-1:0] T2_delayed_DP;
     DelayRegister #(.BITWIDTH(W), .CYCLE_COUNT(DSP_LAT)) T2_delay(
