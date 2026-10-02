@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 
 module ComputeCoreWrapper #(
+    parameter SRAM_REUSE = 0, // enabled only by the integrated secret-key walker
     parameter FFT_ON_THE_FLY_GENERATION = 0,
     parameter PROVIDE_DEBUG_IO = 0,
     parameter LOGN = 13,
@@ -19,8 +20,10 @@ module ComputeCoreWrapper #(
                     dma_bram_dina,
                     dma_bram_doutb,
                     dma_bram_en,
-                    m_aloha_mem);   // C'-3: Aloha storage banks lifted to top
+                    reuse_keygen, reuse_limb, m_aloha_mem);   // C'-3: Aloha storage banks lifted to top
 input clk;
+input reuse_keygen;
+input [3:0] reuse_limb;
 input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
 input [31:0] control_low_word, control_high_word;
 input [31:0] dina_ext_low_word, dina_ext_high_word;
@@ -72,9 +75,11 @@ ComputeCore #(
     .PROVIDE_DEBUG_IO(PROVIDE_DEBUG_IO),
     .LOGN(LOGN),
     .N(N),
+    .SRAM_REUSE(SRAM_REUSE),
     .SCHEME(SCHEME)
   ) CORE(
     .clk(clk),
+    .reuse_keygen(reuse_keygen), .reuse_limb(reuse_limb),
     .rst(rst_core),
     .reseed_en(reseed_en),
     .prng_rst_i(prng_rst_i),

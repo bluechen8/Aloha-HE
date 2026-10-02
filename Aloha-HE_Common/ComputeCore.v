@@ -3,6 +3,7 @@
 
 
 module ComputeCore #(
+    parameter SRAM_REUSE = 0, // enabled only by the integrated secret-key walker
 //////////////////////////// Config Start //////////////////////////////////
   // Set this to 1 for generating FFT twiddle factors on the fly
   // Set this to 0 for using stored FFT twiddle factors
@@ -31,7 +32,7 @@ module ComputeCore #(
 					done_ins_computation,                                // instruction computation finished
 					grant_ext_io,                                        // grant BRAM access to send64/receive64 or to DMA
           dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en, // DMA interface
-          m_aloha_mem                                          // C'-3: storage banks lifted to top (SyncReadMem)
+          reuse_keygen, reuse_limb, m_aloha_mem                                          // C'-3: storage banks lifted to top (SyncReadMem)
 					);
 
 
@@ -65,6 +66,8 @@ localparam DMA_FFT_BRAM_ID = 2'd3;
 
 
 input clk, rst;
+input reuse_keygen;
+input [3:0] reuse_limb;
 // C'-2 free-run PRNG controls (default-tie for legacy: reseed_en=1, prng_rst_i=rst):
 //   reseed_en  - 1 => this sampling pass reloads the Trivium from `seed` (the
 //                per-pass-reload default, keystream restarts at word0). 0 => the
@@ -199,7 +202,7 @@ assign fft_ext_wea = wea_ext && ext_rdwr_addr[0] == 1 && (bram_sel == FFT_BRAM_I
 wire do_expand;
 assign do_expand = bram_sel == FFT_BRAM_EXPAND_ID;
 wire fft_im_ext_wea;
-assign fft_im_ext_wea = wea_ext && bram_sel == FFT_IM_BRAM_ID;
+assign fft_im_ext_wea = wea_ext && (bram_sel == FFT_IM_BRAM_ID || (SRAM_REUSE && bram_sel == NTT_KEY_BRAM_ID));
 
 wire ntt_m_ext_wea_bank0, ntt_m_ext_wea_bank1;
 assign ntt_m_ext_wea_bank0 = wea_ext && ext_rdwr_addr[0] == 0 && bram_sel == NTT_MSG_BRAM_ID;
@@ -281,7 +284,7 @@ SharedFFTBrams #(
     .BRAM_RD_LAT(BRAM_RD_LAT)
   ) fft_bram (
     .clk(clk),
-    .is_fft(~pwm_rst || ~rns_rst || (~transform_rst & ~do_fft) || bram_sel == FFT_IM_BRAM_ID ? 1'd0 : 1'd1),
+    .is_fft(~pwm_rst || ~rns_rst || (~transform_rst & ~do_fft) || (bram_sel == FFT_IM_BRAM_ID || (SRAM_REUSE && bram_sel == NTT_KEY_BRAM_ID)) ? 1'd0 : 1'd1),
 
     // FFT Bank 0: (Complex BRAM)
     .fft_rd_addr_bank0((~transform_rst) ? fft_read_addr_bank0  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[LOGN:2]  : {1'd1, dma_rdwr_addr[LOGN-1:2]})),
@@ -349,6 +352,11 @@ Project #(
     .done(prj_done)
   );
 
+// Reused physical memory ports: M has masked sample bytes; ntt_v ports back K.
+wire msg0_wea, msg1_wea;
+wire [LOGN-2:0] msg0_addra,msg0_addrb,msg1_addra,msg1_addrb;
+wire [53:0] msg0_dina,msg1_dina;
+
 // NTT BRAMs Message (Modular Ring BRAM 0):
 wire [LOGN-2:0] ntt_m_write_addr_bank0, ntt_m_write_addr_bank1;
 wire [LOGN-2:0] ntt_m_read_addr_bank0, ntt_m_read_addr_bank1;
@@ -364,18 +372,21 @@ wire pwm_m_wea_bank0, pwm_m_wea_bank1;
 wire ntt_m_wea_bank0, ntt_m_wea_bank1;
 wire rns_m_wea_bank0, rns_m_wea_bank1;
 // C'-3: ntt_msg banks lifted to top (was NTTPolyBank ntt_msg_bank0/1).
-assign m_aloha_mem.ntt_msg0_addra = ~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_msg0_addrb = ~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_msg0_dina  = ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign m_aloha_mem.ntt_msg0_wea   = ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0)));
-assign ntt_m_rd_data_bank0 = m_aloha_mem.ntt_msg0_doutb;
-assign m_aloha_mem.ntt_msg1_addra = ~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_msg1_addrb = ~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_msg1_dina  = ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign m_aloha_mem.ntt_msg1_wea   = ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1)));
-assign ntt_m_rd_data_bank1 = m_aloha_mem.ntt_msg1_doutb;
+assign msg0_addra = ~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg0_addrb = ~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg0_dina = ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign msg0_wea = ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0)));
+assign ntt_m_rd_data_bank0 = m_aloha_mem.ntt_msg0_doutb[53:0];
+assign msg1_addra = ~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg1_addrb = ~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg1_dina = ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign msg1_wea = ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1)));
+assign ntt_m_rd_data_bank1 = m_aloha_mem.ntt_msg1_doutb[53:0];
 
 
+wire [LOGN-1:0] pwm_result_wr_addr;
+wire pwm_r_wea;
+wire [LOGQ-1:0] pwm_c0_wr_data, pwm_c1_wr_data;
 // NTT BRAMs v (Modular Ring BRAM 2):
 wire [LOGN-2:0] ntt_v_write_addr_bank0, ntt_v_write_addr_bank1;
 wire [LOGN-2:0] ntt_v_read_addr_bank0, ntt_v_read_addr_bank1;
@@ -387,15 +398,15 @@ wire [LOGQ-1:0] ntt_v_rd_data_bank0, ntt_v_rd_data_bank1;
 wire ntt_v_wea_bank0, ntt_v_wea_bank1;
 wire rns_v_wea_bank0, rns_v_wea_bank1;
 // C'-3: ntt_v banks lifted to top (was NTTPolyBank ntt_v_bank0/1).
-assign m_aloha_mem.ntt_v0_addra = ~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
-assign m_aloha_mem.ntt_v0_addrb = ~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
-assign m_aloha_mem.ntt_v0_dina  = ~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]));
-assign m_aloha_mem.ntt_v0_wea   = ~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0));
+assign m_aloha_mem.ntt_v0_addra = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | {1'b0,(~pwm_rst ? pwm_result_wr_addr[LOGN-1:1] : (~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))))}) : (~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_v0_addrb = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | (~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))) : (~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_v0_dina = SRAM_REUSE ? (~pwm_rst ? pwm_c0_wr_data : (~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))) : (~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign m_aloha_mem.ntt_v0_wea = SRAM_REUSE ? (reuse_keygen && (~pwm_rst ? (pwm_r_wea && pwm_result_wr_addr[0] == 1'b0) : (~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0))))) : (~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0)));
 assign ntt_v_rd_data_bank0 = m_aloha_mem.ntt_v0_doutb;
-assign m_aloha_mem.ntt_v1_addra = ~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
-assign m_aloha_mem.ntt_v1_addrb = ~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
-assign m_aloha_mem.ntt_v1_dina  = ~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]));
-assign m_aloha_mem.ntt_v1_wea   = ~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1));
+assign m_aloha_mem.ntt_v1_addra = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | {1'b0,(~pwm_rst ? pwm_result_wr_addr[LOGN-1:1] : (~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))))}) : (~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_v1_addrb = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | (~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))) : (~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign m_aloha_mem.ntt_v1_dina = SRAM_REUSE ? (~pwm_rst ? pwm_c0_wr_data : (~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))) : (~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign m_aloha_mem.ntt_v1_wea = SRAM_REUSE ? (reuse_keygen && (~pwm_rst ? (pwm_r_wea && pwm_result_wr_addr[0] == 1'b1) : (~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1))))) : (~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1)));
 assign ntt_v_rd_data_bank1 = m_aloha_mem.ntt_v1_doutb;
 
 
@@ -456,14 +467,15 @@ assign m_aloha_mem.ntt_key0_addra = ~pwm_rst ? pwm_key_write_addr_bank0 : (grant
 assign m_aloha_mem.ntt_key0_addrb = ~pwm_rst ? pwm_key_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
 assign m_aloha_mem.ntt_key0_dina  = ~pwm_rst ? pwm_key_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0]);
 assign m_aloha_mem.ntt_key0_wea   = ~pwm_rst ? pwm_key_wea_bank0        : (grant_ext ? ntt_key_ext_wea_bank0 : ntt_key_dma_wea_bank0);
-assign ntt_key_rd_data_bank0 = m_aloha_mem.ntt_key0_doutb;
+assign ntt_key_rd_data_bank0 = SRAM_REUSE ? m_aloha_mem.fft_lower0_doutb[53:0] : m_aloha_mem.ntt_key0_doutb;
 assign m_aloha_mem.ntt_key1_addra = ~pwm_rst ? pwm_key_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
 assign m_aloha_mem.ntt_key1_addrb = ~pwm_rst ? pwm_key_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1]   : dma_rdwr_addr[LOGN-1:1]);
 assign m_aloha_mem.ntt_key1_dina  = ~pwm_rst ? pwm_key_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]    : dina_dma[LOGQ-1:0]);
 assign m_aloha_mem.ntt_key1_wea   = ~pwm_rst ? pwm_key_wea_bank1        : (grant_ext ? ntt_key_ext_wea_bank1 : ntt_key_dma_wea_bank1);
-assign ntt_key_rd_data_bank1 = m_aloha_mem.ntt_key1_doutb;
+assign ntt_key_rd_data_bank1 = SRAM_REUSE ? m_aloha_mem.fft_lower1_doutb[53:0] : m_aloha_mem.ntt_key1_doutb;
 
 
+wire [7:0] sample_read_data;
 // Random polynomial BRAMs (Error Poly BRAM):
 wire e0_bram_wea,e1_bram_wea,v_bram_wea;
 wire [LOGN-1:0] e0_bram_rd_addr,e1_bram_rd_addr,v_bram_rd_addr;
@@ -476,7 +488,7 @@ wire [1:0] v_bram_rd_data;
 assign m_aloha_mem.e0_wea   = e0_bram_wea;
 assign m_aloha_mem.e0_addra = ~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
 assign m_aloha_mem.e0_dina  = e0_bram_wr_data;
-assign e0_bram_rd_data = m_aloha_mem.e0_douta;
+assign e0_bram_rd_data = SRAM_REUSE ? sample_read_data[5:0] : m_aloha_mem.e0_douta;
 // C'-3: e1 ERROR sampler bank dropped on the sk product path (SCHEME==1), just
 // like NTT_E1. On the sk scheme c1=a is a plaintext passthrough with no second
 // error e1 and no second multiply, so e1_bram is write-only-dead: RandomSampling
@@ -499,7 +511,7 @@ endgenerate
 assign m_aloha_mem.vt_wea   = v_bram_wea;
 assign m_aloha_mem.vt_addra = ~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
 assign m_aloha_mem.vt_dina  = v_bram_wr_data;
-assign v_bram_rd_data = m_aloha_mem.vt_douta;
+assign v_bram_rd_data = SRAM_REUSE ? sample_read_data[1:0] : m_aloha_mem.vt_douta;
 
 
 // Constants ROM:
@@ -767,17 +779,17 @@ assign pwm_e1_read_addr_bank0 = pwm_c_rd_addr[LOGN-1:1];
 assign pwm_e1_read_addr_bank1 = pwm_c_rd_addr[LOGN-1:1];
 wire pwm_c_bank_sel_delayed;
 DelayRegister #(.CYCLE_COUNT(BRAM_RD_LAT), .BITWIDTH(1)) pwm_c_bank_sel_delay (.clk(clk), .in(pwm_c_rd_addr[0]), .out(pwm_c_bank_sel_delayed));
-wire [LOGN-1:0] pwm_result_wr_addr;
+
 assign pwm_m_write_addr_bank0   = pwm_result_wr_addr[LOGN-1:1];
 assign pwm_m_write_addr_bank1   = pwm_result_wr_addr[LOGN-1:1];
 assign pwm_key_write_addr_bank0 = pwm_result_wr_addr[LOGN-1:1];
 assign pwm_key_write_addr_bank1 = pwm_result_wr_addr[LOGN-1:1];
-wire pwm_r_wea;
+
 assign pwm_m_wea_bank0   = pwm_r_wea & ~pwm_result_wr_addr[0];
 assign pwm_m_wea_bank1   = pwm_r_wea &  pwm_result_wr_addr[0];
 assign pwm_key_wea_bank0 = pwm_r_wea & ~pwm_result_wr_addr[0];
 assign pwm_key_wea_bank1 = pwm_r_wea &  pwm_result_wr_addr[0];
-wire [LOGQ-1:0] pwm_c0_wr_data, pwm_c1_wr_data;
+
 assign pwm_m_wr_data_bank0   = pwm_c0_wr_data;
 assign pwm_m_wr_data_bank1   = pwm_c0_wr_data;
 assign pwm_key_wr_data_bank0 = pwm_c1_wr_data;
@@ -1020,5 +1032,43 @@ assign doutb_dma = dma_bram_sel == DMA_FFT_BRAM_ID ? (dma_rd_bank_sel_fft == 0 ?
                    dma_bram_sel == DMA_MSG_BRAM_ID ? (dma_rd_bank_sel == 0 ? {10'd0, ntt_m_rd_data_bank0}   : {10'd0, ntt_m_rd_data_bank1}) :  
                    dma_bram_sel == DMA_KEY_BRAM_ID ? (dma_rd_bank_sel == 0 ? {10'd0, ntt_key_rd_data_bank0} : {10'd0, ntt_key_rd_data_bank1}) : 
                    64'dX; // V BRAM is write-only via dma
+
+
+// Sample and residue fields share M without read-modify-write. The selected
+// sample remains indexed in coefficient order across in-place transforms.
+wire [LOGN-1:0] sample_addr = reuse_keygen ? v_bram_rd_addr : e0_bram_rd_addr;
+wire [LOGN-1:0] sample_write_addr = reuse_keygen ? v_bram_wr_addr : e0_bram_wr_addr;
+wire sample_write = !random_sampling_rst && (reuse_keygen ? v_bram_wea : e0_bram_wea);
+wire [7:0] sample_write_data = reuse_keygen ? {6'd0,v_bram_wr_data} : {2'd0,e0_bram_wr_data};
+wire sample_read_bank;
+DelayRegister #(.CYCLE_COUNT(BRAM_RD_LAT), .BITWIDTH(1)) sample_bank_delay
+  (.clk(clk), .in(sample_addr[0]), .out(sample_read_bank));
+assign sample_read_data = sample_read_bank ? m_aloha_mem.ntt_msg1_doutb[63:56] : m_aloha_mem.ntt_msg0_doutb[63:56];
+generate if (SRAM_REUSE) begin : shared_message
+assign m_aloha_mem.ntt_msg0_wea = sample_write ? (sample_write_addr[0] == 1'b0) :
+  (msg0_wea && !(!transform_rst && do_fft) && !(reuse_keygen && !pwm_rst));
+assign m_aloha_mem.ntt_msg0_mask = sample_write ? 8'h80 : 8'h7f;
+assign m_aloha_mem.ntt_msg0_addra = sample_write ? sample_write_addr[LOGN-1:1] : msg0_addra;
+assign m_aloha_mem.ntt_msg0_dina = sample_write ? {sample_write_data,56'd0} : {10'd0,msg0_dina};
+assign m_aloha_mem.ntt_msg0_addrb = !rns_rst ? sample_addr[LOGN-1:1] : msg0_addrb;
+assign m_aloha_mem.ntt_msg1_wea = sample_write ? (sample_write_addr[0] == 1'b1) :
+  (msg1_wea && !(!transform_rst && do_fft) && !(reuse_keygen && !pwm_rst));
+assign m_aloha_mem.ntt_msg1_mask = sample_write ? 8'h80 : 8'h7f;
+assign m_aloha_mem.ntt_msg1_addra = sample_write ? sample_write_addr[LOGN-1:1] : msg1_addra;
+assign m_aloha_mem.ntt_msg1_dina = sample_write ? {sample_write_data,56'd0} : {10'd0,msg1_dina};
+assign m_aloha_mem.ntt_msg1_addrb = !rns_rst ? sample_addr[LOGN-1:1] : msg1_addrb;
+
+end else begin : reference_message
+assign m_aloha_mem.ntt_msg0_wea = msg0_wea;
+assign m_aloha_mem.ntt_msg0_addra = msg0_addra;
+assign m_aloha_mem.ntt_msg0_addrb = msg0_addrb;
+assign m_aloha_mem.ntt_msg0_dina = msg0_dina;
+assign m_aloha_mem.ntt_msg0_mask = 8'h7f;
+assign m_aloha_mem.ntt_msg1_wea = msg1_wea;
+assign m_aloha_mem.ntt_msg1_addra = msg1_addra;
+assign m_aloha_mem.ntt_msg1_addrb = msg1_addrb;
+assign m_aloha_mem.ntt_msg1_dina = msg1_dina;
+assign m_aloha_mem.ntt_msg1_mask = 8'h7f;
+end endgenerate
 
 endmodule
