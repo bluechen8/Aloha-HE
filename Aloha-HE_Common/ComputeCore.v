@@ -135,6 +135,14 @@ wire rns_rst, rns_done;
 wire i2f_rst, i2f_done;
 wire pwm_rst, pwm_done;
 wire prj_rst, prj_done;
+// Opcodes 6/7 are integer-only refresh support, enabled with shared storage.
+wire sample_only = SRAM_REUSE && opcode == 3'd6;
+wire lift_active = SRAM_REUSE && opcode == 3'd7;
+wire lift_snapshot = lift_active && OP1[0];
+wire lift_done, lift_we;
+wire [LOGN-1:0] lift_rd_addr, lift_wr_addr;
+wire [53:0] lift_data;
+wire [53:0] lift_q;
 assign prj_rst       = opcode==3'd5 ? 1'b0 : 1'b1;
 assign pwm_rst       = opcode==3'd4 ? 1'b0 : 1'b1;
 assign i2f_rst       = opcode==3'd3 ? 1'b0 : 1'b1;
@@ -164,6 +172,8 @@ wire [2:0] constants_sel;
 assign current_k = OP1[5:2];
 assign constants_sel = OP1[8:6];
 assign qm = {OP3[6:0], OP2};
+assign lift_q = {(13'h1fff >> (8-current_k)), qm, 23'b0, 1'b1};
+
 // rns parameters:
 wire [3:0] modulus_select;
 assign modulus_select = OP1[9:6];
@@ -177,18 +187,15 @@ wire random_sampling_rst;
 wire random_sampling_done;
 wire [63:0] random_sampling_seed;
 wire sample_errors; // true: sample e0, e1, v; false: sample pk1
-// FIXME(fhe-keygen-fp-split): the sampler is welded to a transform pass here
-// (released only when transform_rst=0, i.e. an FFT-DIF or NTT-fwd instruction),
-// which forces keygen to run FFT butterflies on a zeroed bank just to sample the
-// (integer) secret. For a clean no-FP keygen, add a sample-only decode that pulls
-// random_sampling_rst low WITHOUT starting UnifiedTransformation, and OR
-// random_sampling_done into done_ins_computation below. See the keygen microcode
-// FIXME in fhe_microseq.sv (KEYGEN program) for the full split + rationale.
-assign random_sampling_rst = (do_fft && is_dif) || (~do_fft && ~is_dif) ? transform_rst : 1'd1;
+// Encrypt/keygen retain their original transform-coupled sampling schedule.
+// Refresh uses sample-only opcode 6 to sample e0 without starting FFT. Moving
+// keygen to sample-only also needs its integer secret/RNS path separated from
+// the currently scheduled floating message conversion.
+assign random_sampling_rst = sample_only ? 1'b0 : (do_fft && is_dif) || (~do_fft && ~is_dif) ? transform_rst : 1'd1;
 assign random_sampling_seed = dina_ext;
-assign sample_errors = do_fft;
+assign sample_errors = do_fft || sample_only;
 
-assign done_ins_computation = transformation_done | rns_done | i2f_done | pwm_done | prj_done;
+assign done_ins_computation = transformation_done | rns_done | i2f_done | pwm_done | prj_done | (sample_only && random_sampling_done) | (lift_active && lift_done);
 
 /******************** HW-SW interfaces ***************/
 
@@ -269,6 +276,13 @@ wire [LOGN-1:0] pwm_b_rd_addr;
 wire [LOGN-1:0] rns_read_addr;
 wire [FLP_WORDSIZE-1:0] rns_read_data;
 wire [LOGQ-1:0] fft_im_rd_data;
+CenterLift #(.LOGN(LOGN), .BRAM_RD_LAT(BRAM_RD_LAT)) center_lift (
+    .clk(clk), .rst(!lift_active), .snapshot(lift_snapshot), .target_q(lift_q),
+    .rd_addr(lift_rd_addr), .wr_addr(lift_wr_addr),
+    .msg0(m_aloha_mem.ntt_msg0_doutb), .msg1(m_aloha_mem.ntt_msg1_doutb),
+    .saved(rns_read_data), .wr_data(lift_data), .wr_en(lift_we), .done(lift_done)
+);
+
 
 wire [LOGN-2:0] prj_write_addr, prj_read_addr;
 wire [2*FLP_WORDSIZE-1:0] prj_wr_data;
@@ -284,24 +298,24 @@ SharedFFTBrams #(
     .BRAM_RD_LAT(BRAM_RD_LAT)
   ) fft_bram (
     .clk(clk),
-    .is_fft(~pwm_rst || ~rns_rst || (~transform_rst & ~do_fft) || (bram_sel == FFT_IM_BRAM_ID || (SRAM_REUSE && bram_sel == NTT_KEY_BRAM_ID)) ? 1'd0 : 1'd1),
+    .is_fft((lift_active && !lift_snapshot) || ~pwm_rst || ~rns_rst || (~transform_rst & ~do_fft) || (bram_sel == FFT_IM_BRAM_ID || (SRAM_REUSE && bram_sel == NTT_KEY_BRAM_ID)) ? 1'd0 : 1'd1),
 
     // FFT Bank 0: (Complex BRAM)
     .fft_rd_addr_bank0((~transform_rst) ? fft_read_addr_bank0  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[LOGN:2]  : {1'd1, dma_rdwr_addr[LOGN-1:2]})),
-    .fft_wr_addr_bank0((~transform_rst) ? fft_write_addr_bank0 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank0 : ext_write_addr_bank0), 
+    .fft_wr_addr_bank0(lift_snapshot ? lift_wr_addr[LOGN-1:1] : (~transform_rst) ? fft_write_addr_bank0 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank0 : ext_write_addr_bank0),
     .fft_rd_data_bank0(fft_rd_data_bank0), 
-    .fft_wr_data_bank0((~transform_rst) ? fft_wr_data_bank0    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank0    : ext_wr_data_bank0), 
-    .fft_wea_bank0(    (~transform_rst) ? fft_wea_bank0        : (~prj_rst) ? prj_wea_bank0  : (~i2f_rst) ? i2f_wea_bank0        : fft_ext_wea_bank0),
+    .fft_wr_data_bank0(lift_snapshot ? {10'b0,lift_data,64'b0} : (~transform_rst) ? fft_wr_data_bank0    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank0    : ext_wr_data_bank0),
+    .fft_wea_bank0(lift_snapshot ? (lift_we && lift_wr_addr[0] == 1'b0) :     (~transform_rst) ? fft_wea_bank0        : (~prj_rst) ? prj_wea_bank0  : (~i2f_rst) ? i2f_wea_bank0        : fft_ext_wea_bank0),
     
     // FFT Bank 1: (Complex BRAM)
     .fft_rd_addr_bank1((~transform_rst) ? fft_read_addr_bank1  : (~prj_rst) ? prj_read_addr  : (grant_ext ? ext_rdwr_addr[LOGN:2]  : {1'd1, dma_rdwr_addr[LOGN-1:2]})), 
-    .fft_wr_addr_bank1((~transform_rst) ? fft_write_addr_bank1 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank1 : ext_write_addr_bank1),
+    .fft_wr_addr_bank1(lift_snapshot ? lift_wr_addr[LOGN-1:1] : (~transform_rst) ? fft_write_addr_bank1 : (~prj_rst) ? prj_write_addr : (~i2f_rst) ? i2f_write_addr_bank1 : ext_write_addr_bank1),
     .fft_rd_data_bank1(fft_rd_data_bank1), 
-    .fft_wr_data_bank1((~transform_rst) ? fft_wr_data_bank1    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank1    : ext_wr_data_bank1),
-    .fft_wea_bank1(    (~transform_rst) ? fft_wea_bank1        : (~prj_rst) ? prj_wea_bank1  : (~i2f_rst) ? i2f_wea_bank1        : fft_ext_wea_bank1),
+    .fft_wr_data_bank1(lift_snapshot ? {10'b0,lift_data,64'b0} : (~transform_rst) ? fft_wr_data_bank1    : (~prj_rst) ? prj_wr_data    : (~i2f_rst) ? i2f_wr_data_bank1    : ext_wr_data_bank1),
+    .fft_wea_bank1(lift_snapshot ? (lift_we && lift_wr_addr[0] == 1'b1) :     (~transform_rst) ? fft_wea_bank1        : (~prj_rst) ? prj_wea_bank1  : (~i2f_rst) ? i2f_wea_bank1        : fft_ext_wea_bank1),
 
     // RNS port: (Complex BRAM)
-    .rns_rd_addr(rns_read_addr),
+    .rns_rd_addr(lift_active ? lift_rd_addr : rns_read_addr),
     .rns_rd_data(rns_read_data), 
     
     // Key port: (Imag BRAM)
@@ -372,15 +386,15 @@ wire pwm_m_wea_bank0, pwm_m_wea_bank1;
 wire ntt_m_wea_bank0, ntt_m_wea_bank1;
 wire rns_m_wea_bank0, rns_m_wea_bank1;
 // C'-3: ntt_msg banks lifted to top (was NTTPolyBank ntt_msg_bank0/1).
-assign msg0_addra = ~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign msg0_addrb = ~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign msg0_dina = ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign msg0_wea = ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0)));
+assign msg0_addra = lift_active ? lift_wr_addr[LOGN-1:1] : ~transform_rst ? ntt_m_write_addr_bank0 : (~rns_rst ? rns_m_write_addr_bank0 : (~pwm_rst ? pwm_m_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg0_addrb = lift_active ? lift_rd_addr[LOGN-1:1] : ~transform_rst ? ntt_m_read_addr_bank0  : (~pwm_rst ? pwm_m_read_addr_bank0  : (~i2f_rst ? i2f_m_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg0_dina = lift_active ? lift_data : ~transform_rst ? ntt_m_wr_data_bank0    : (~rns_rst ? rns_m_wr_data_bank0    : (~pwm_rst ? pwm_m_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign msg0_wea = lift_active ? (!lift_snapshot && lift_we && lift_wr_addr[0] == 1'b0) : ~transform_rst ? ntt_m_wea_bank0        : (~rns_rst ? rns_m_wea_bank0        : (~pwm_rst ? pwm_m_wea_bank0        : (grant_ext ? ntt_m_ext_wea_bank0 : ntt_m_dma_wea_bank0)));
 assign ntt_m_rd_data_bank0 = m_aloha_mem.ntt_msg0_doutb[53:0];
-assign msg1_addra = ~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign msg1_addrb = ~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign msg1_dina = ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign msg1_wea = ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1)));
+assign msg1_addra = lift_active ? lift_wr_addr[LOGN-1:1] : ~transform_rst ? ntt_m_write_addr_bank1 : (~rns_rst ? rns_m_write_addr_bank1 : (~pwm_rst ? pwm_m_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg1_addrb = lift_active ? lift_rd_addr[LOGN-1:1] : ~transform_rst ? ntt_m_read_addr_bank1  : (~pwm_rst ? pwm_m_read_addr_bank1  : (~i2f_rst ? i2f_m_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
+assign msg1_dina = lift_active ? lift_data : ~transform_rst ? ntt_m_wr_data_bank1    : (~rns_rst ? rns_m_wr_data_bank1    : (~pwm_rst ? pwm_m_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
+assign msg1_wea = lift_active ? (!lift_snapshot && lift_we && lift_wr_addr[0] == 1'b1) : ~transform_rst ? ntt_m_wea_bank1        : (~rns_rst ? rns_m_wea_bank1        : (~pwm_rst ? pwm_m_wea_bank1        : (grant_ext ? ntt_m_ext_wea_bank1 : ntt_m_dma_wea_bank1)));
 assign ntt_m_rd_data_bank1 = m_aloha_mem.ntt_msg1_doutb[53:0];
 
 
