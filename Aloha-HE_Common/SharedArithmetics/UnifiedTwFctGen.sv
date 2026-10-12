@@ -41,11 +41,9 @@ module UnifiedTwFctGen #(
   localparam LOGN = $clog2(N);        // = 13 at N=8192
   localparam LOGLOGN = $clog2(LOGN);  // = 4  at N=8192; width of stage_counter
   localparam TOP_STAGE = LOGN - 1;    // index of the final radix-2 stage (was hardcoded 12)
-  // Twiddle-cache layout (per modulus): 1 empty + 31 fixed entries (stages 0-4) +
-  // (LOGN-5) high entries w^(2^k) for stages 5..LOGN-1. The fixed region (relative
-  // offsets 0-30, incl. ADDR_W_32 and the ifft remap table) is N-independent; only
-  // the cache size and the DIT read start scale with LOGN.
-  localparam NTT_CACHE_STRIDE   = LOGN + 27;        // cache lines per modulus (40 @ N=8192)
+  // Packed NTT cache per modulus: 31 seeds for stage indices 0..4, then
+  // LOGN-5 later-stage seeds, with no padding word between moduli.
+  localparam NTT_CACHE_STRIDE = LOGN + 26; // 39 words per modulus at N=8192
   localparam [5:0] ROM_ADDR_START_DIT = LOGN + 25;  // forward-NTT (DIT) read start (38 @ N=8192)
 
   // counters to keep track of the transformation progress:
@@ -83,9 +81,9 @@ module UnifiedTwFctGen #(
   logic [ADDR_WIDTH_ROM-1:0] rom_base_DP;
   assign rom_offset[5:0] = rst ? ADDR_W_32 : butterfly_counter == NR_BF_PER_STAGE - 4 ? rom_addr_next_w_c_DP : rom_addr_DP;
   always_ff @(posedge clk) begin
-    // NTT twiddle cache for modulus `constants_sel` lives at base 129 + sel*stride
-    // (stride = cache lines per modulus = LOGN+27; base 129 = 128-pad + skip empty slot).
-    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : 9'd129 + NTT_CACHE_STRIDE * constants_sel;
+    // First seed of modulus constants_sel, after the 128-word FFT/RNS
+    // prefix: 128 + sel*(LOGN+26).
+    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : 9'd128 + NTT_CACHE_STRIDE * constants_sel;
   end
   assign rom_addr = rom_base_DP + rom_offset;
 

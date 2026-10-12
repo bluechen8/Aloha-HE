@@ -530,10 +530,11 @@ assign v_bram_rd_data = SRAM_REUSE ? sample_read_data[1:0] : m_aloha_mem.vt_dout
 
 // Constants ROM:
 // contains the "Twiddle factor cache" for FFT and NTT twiddle factor generation and the RNS constants
-wire [8:0] transform_tw_rom_addr, rns_constant_rom_addr;
+wire [`FHE_CROM_AW-1:0] transform_tw_rom_addr;
+wire [8:0] rns_constant_rom_addr;
 wire [2*FLP_WORDSIZE-1:0] tw_rom_data;
 // C'-3: constants ROM lifted to top (was FFTTw_RNS_ROM constants_rom).
-assign m_aloha_mem.crom_addra = (~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr;
+assign m_aloha_mem.crom_addra = (~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr[`FHE_CROM_AW-1:0];
 assign tw_rom_data = m_aloha_mem.crom_douta;
 
 
@@ -570,7 +571,7 @@ wire [LOGQ-1:0] rns_mult_factor, rns_mult_result;
 wire [LOGN-2:0] ftw_rom_addr_lifted;
 UnifiedTransformation #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
-    .ADDR_WIDTH_ROM(9),
+    .ADDR_WIDTH_ROM(`FHE_CROM_AW),
     .N(N)
   ) unified_transform (
     .clk(clk),

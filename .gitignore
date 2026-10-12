@@ -1,0 +1,2 @@
+# Generated CROM tables; simulation runners generate them in local build directories.
+/Aloha-HE_Common/MemoryInitializationFiles/TwFctrCache_RNSConsts*.coe

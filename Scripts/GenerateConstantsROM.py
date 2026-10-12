@@ -2,7 +2,8 @@
 
 from math import log2, ceil
 import cmath
-import sys
+import argparse
+from fhe_profiles import installed, geometry
 from helper import doubleToUint64, modinv, find_min_primitive_root
 
 ####################################################
@@ -15,10 +16,21 @@ from helper import doubleToUint64, modinv, find_min_primitive_root
 # bits. w=24 is the word size used.
 # The primes generated satisfy q = 1 mod 2*n, where
 # n=2**13 is the polynomial degree used.
-# Enter primes in corresponding arrays below.
+# Installed primes come from fhe_profiles.py.
 ####################################################
 
-N = 2**(int(sys.argv[1]) if len(sys.argv) > 1 else 13) # polynomial degree (arg1 = LOGN, default 13)
+parser = argparse.ArgumentParser(description="Generate matching RNS/NTT tables for an installed prime prefix")
+parser.add_argument('logn', type=int, nargs='?', default=13)
+parser.add_argument('output', nargs='?', default='../Aloha-HE_Common/MemoryInitializationFiles/TwFctrCache_RNSConsts_new.coe')
+parser.add_argument('--profiles', type=int, default=2)
+args = parser.parse_args()
+N = 1 << args.logn
+try:
+  moduli = installed(args.profiles)
+  geometry(N, args.profiles)
+except ValueError as error:
+  parser.error(str(error))
+
 w = 24 # word size
 m = 17 # bit-width of q_m
 k_min = 46 # min bit-width of moduli
@@ -92,7 +104,6 @@ def ntt_getLines(moduli):
     tw_forward_BRAM, tw_inverse_BRAM = generateTwFctCache(q, N)
     R = 2**(w*3)
 
-    lines.append("0") # empty memory location
     for i in range(len(tw_forward_BRAM)):
       t1 = (tw_inverse_BRAM[i] * R) % q
       t2 = (tw_forward_BRAM[i] * R) % q
@@ -115,7 +126,7 @@ def rns_getLines(moduli):
   return lines
 
 
-f_target = open(sys.argv[2] if len(sys.argv) > 2 else "../Aloha-HE_Common/MemoryInitializationFiles/TwFctrCache_RNSConsts_new.coe","w")
+f_target = open(args.output,"w")
 lines_written = 0
 f_target.write("memory_initialization_radix = 16;\nmemory_initialization_vector = ")
 
@@ -123,9 +134,7 @@ for line in fft_getLines():
     f_target.write(line + "\n")
     lines_written += 1
 
-# enter moduli for RNS ( at most 16 ) here: 
-moduli = [0x3ffff7000001, 0x7fffff000001, 0xffffd8000001, 0x1fffffb000001, 0x3ffffe4000001, 0x7fffff9000001, 0xffffff3000001, 0x1ffffff6000001, 0x3fffffff000001]
-assert len(moduli) <= 16
+# The same ordered prime prefix is used for RNS and NTT.
 lines = rns_getLines(moduli)
 
 i = 0
@@ -139,9 +148,6 @@ while i < len(lines):
 for i in range(lines_written, 128):
    f_target.write("0\n")
 
-# enter moduli for NTT ( at most 8 ) here: 
-moduli = [0x3ffff7000001, 0x7fffff000001, 0xffffd8000001, 0x1fffffb000001, 0x3ffffe4000001, 0x7fffff9000001, 0xffffff3000001, 0x3fffffff000001]
-assert len(moduli) <= 8
 for line in ntt_getLines(moduli):
     f_target.write(line + "\n")
 
