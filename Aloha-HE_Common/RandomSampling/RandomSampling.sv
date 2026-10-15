@@ -16,7 +16,7 @@ module RandomSampling #(
     // C'-2 free-run PRNG controls (decoupled from the per-pass `rst`):
     input prng_rst,      // power-on/global reset for the Trivium (NOT pulsed per pass)
     input reseed,        // pulse to (re)load `seed` into the Trivium + re-warm
-    input [63:0] seed,
+    input [159:0] seed,  // Trivium key [79:0], IV [159:80]
     input [3:0] current_k,
     input [M-1:0] qm,
 

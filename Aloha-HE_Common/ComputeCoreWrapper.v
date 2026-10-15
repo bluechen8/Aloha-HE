@@ -6,9 +6,11 @@ module ComputeCoreWrapper #(
     parameter PROVIDE_DEBUG_IO = 0,
     parameter LOGN = 13,
     parameter N    = 1 << LOGN,
-    parameter SCHEME = 0   // 0 = public-key (vendor PWM ref); 1 = secret-key (PWMSk)
+    parameter SCHEME = 0,  // 0 = public-key (vendor PWM ref); 1 = secret-key (PWMSk)
+    parameter SEED_SIDEBAND = 0 // 1 = sampler seed from prng_seed, not dina_ext
   ) (clk,
                     reseed_en, prng_rst_i,   // C'-2 free-run PRNG controls (pass-through to CORE)
+                    prng_seed,               // 160-bit sampler seed (SEED_SIDEBAND=1)
                     // AXI registers for controlling the co-processor
                     control_low_word, control_high_word,
                     dina_ext_low_word, dina_ext_high_word, 
@@ -25,6 +27,7 @@ input clk;
 input reuse_keygen;
 input [3:0] reuse_limb;
 input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
+input [159:0] prng_seed;       // Trivium key [79:0], IV [159:80]
 input [31:0] control_low_word, control_high_word;
 input [31:0] dina_ext_low_word, dina_ext_high_word;
 
@@ -76,13 +79,15 @@ ComputeCore #(
     .LOGN(LOGN),
     .N(N),
     .SRAM_REUSE(SRAM_REUSE),
-    .SCHEME(SCHEME)
+    .SCHEME(SCHEME),
+    .SEED_SIDEBAND(SEED_SIDEBAND)
   ) CORE(
     .clk(clk),
     .reuse_keygen(reuse_keygen), .reuse_limb(reuse_limb),
     .rst(rst_core),
     .reseed_en(reseed_en),
     .prng_rst_i(prng_rst_i),
+    .prng_seed(prng_seed),
     .address_ext(address_ext), 
     .bram_sel(bram_sel), 
     .dina_ext(dina_ext), 

@@ -23,10 +23,15 @@ module ComputeCore #(
   // Encryption scheme select (Rung 6c): 0 = public-key (vendor PWM, the
   // SEAL-golden validation reference); 1 = secret-key (PWMSk, the product
   // datapath -- single multiply lane + negate-b + c1=a passthrough).
-  parameter SCHEME = 0
+  parameter SCHEME = 0,
+
+  // Sampler seed source: 0 = dina_ext (64-bit, zero-extended, as in the
+  // standalone/co-simulation flows); 1 = the 160-bit prng_seed sideband.
+  parameter SEED_SIDEBAND = 0
 //////////////////////////// Config End ////////////////////////////////////
 ) (clk, rst,
           reseed_en, prng_rst_i,                               // C'-2 free-run PRNG controls (see below)
+          prng_seed,                                           // 160-bit sampler seed (SEED_SIDEBAND=1)
           address_ext, bram_sel, dina_ext, doutb_ext, wea_ext, // send64() and receive64() testing interface to software
 					command_in, command_we,                              // current instruction to execute
 					done_ins_computation,                                // instruction computation finished
@@ -78,6 +83,7 @@ input [3:0] reuse_limb;
 //                the Trivium reset to that would wipe its state before every pass and
 //                make free-run impossible, so the Trivium reset is a separate input.
 input reseed_en, prng_rst_i;
+input [159:0] prng_seed; // Trivium key [79:0], IV [159:80]
 input [LOGN:0] address_ext; // SW-facing address: LOGN+1 bits spans the 2N coefficient space
 input [2:0] bram_sel;
 input [63:0] dina_ext;
@@ -185,14 +191,14 @@ assign scale_i2f = {{3{scale[8]}}, scale[8:0]};
 // random sampling signals:
 wire random_sampling_rst;
 wire random_sampling_done;
-wire [63:0] random_sampling_seed;
+wire [159:0] random_sampling_seed;
 wire sample_errors; // true: sample e0, e1, v; false: sample pk1
 // Encrypt/keygen retain their original transform-coupled sampling schedule.
 // Refresh uses sample-only opcode 6 to sample e0 without starting FFT. Moving
 // keygen to sample-only also needs its integer secret/RNS path separated from
 // the currently scheduled floating message conversion.
 assign random_sampling_rst = sample_only ? 1'b0 : (do_fft && is_dif) || (~do_fft && ~is_dif) ? transform_rst : 1'd1;
-assign random_sampling_seed = dina_ext;
+assign random_sampling_seed = SEED_SIDEBAND ? prng_seed : {96'd0, dina_ext};
 assign sample_errors = do_fft || sample_only;
 
 assign done_ins_computation = transformation_done | rns_done | i2f_done | pwm_done | prj_done | (sample_only && random_sampling_done) | (lift_active && lift_done);

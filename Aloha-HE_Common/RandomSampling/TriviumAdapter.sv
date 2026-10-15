@@ -48,7 +48,7 @@
 //            when warmup completes.
 //   active - 1 while a sampling pass is actively consuming the keystream; 0
 //            freezes the stream (state held) between passes.
-//   seed   - 64-bit reseed value (sampled at the reseed pulse).
+//   seed   - 160-bit reseed value: key [79:0], IV [159:80] (sampled at the reseed pulse).
 // Between reseeds, while `active`, the Trivium free-runs one 64-bit word per
 // cycle and random_valid stays high, so the keystream is continuous across passes.
 module TriviumAdapter(
@@ -56,7 +56,7 @@ module TriviumAdapter(
     input        rst,
     input        reseed,
     input        active,
-    input [63:0] seed,
+    input [159:0] seed,
     output [63:0] random_out,
     output        random_valid
   );
@@ -77,9 +77,11 @@ module TriviumAdapter(
   logic reseed_pulse;
   assign reseed_pulse = reseed & ~reseed_q;
 
-  // Key/IV seed: 64-bit Aloha seed -> Trivium key (low 64 of 80), iv = 0.
-  logic [79:0] seed_key;
-  assign seed_key = {16'd0, seed};
+  // Key/IV seed: Trivium key = seed[79:0], IV = seed[159:80]. A 64-bit seed
+  // zero-extended to 160 bits gives the original key-only, IV = 0 mapping.
+  logic [79:0] seed_key, seed_iv;
+  assign seed_key = seed[79:0];
+  assign seed_iv  = seed[159:80];
 
   logic        seed_done;
 
@@ -111,7 +113,7 @@ module TriviumAdapter(
     .seed_req_o           (),              // (KeyIv holds this high after seed_en; unused)
     .seed_ack_i           (reseed_pulse),  // one-cycle ack coincident with the request
     .seed_key_i           (seed_key),
-    .seed_iv_i            (80'd0),
+    .seed_iv_i            (seed_iv),
     .seed_state_full_i    ('0),
     .seed_state_partial_i ('0),
     .key_o                (random_out),
