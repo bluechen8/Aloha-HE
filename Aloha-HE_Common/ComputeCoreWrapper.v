@@ -62,13 +62,14 @@ wire [31:0] status_wire;
 wire [30:0] cycle_count;
 
 assign address_ext = control_low_word[LOGN:0];
-assign wea_ext = control_low_word[14];
-assign grant_ext = control_low_word[16];
+// Flags at 17 (wea), 18 (ins), 19 (grant): fhe_params_pkg FHE_CW_*.
+assign wea_ext = control_low_word[17];
+assign grant_ext = control_low_word[19];
 assign bram_sel = control_low_word[31:29];
 
 assign status_wire = {cycle_count[29:0], 1'd0, done_all_computation};
 assign {dout_ext_high_word,dout_ext_low_word} = dout_ext;
-assign wea_ext_core = (wea_ext==1'b1 & control_low_word[15]==1'b0) ? 1'b1 : 1'b0;
+assign wea_ext_core = (wea_ext==1'b1 & control_low_word[18]==1'b0) ? 1'b1 : 1'b0;
 
 always @(posedge clk)
     status <= status_wire;
@@ -108,7 +109,7 @@ ComputeCore #(
 assign rst_core = control_high_word[0];
 assign rst_ISA = control_high_word[0];
 assign start_ISA = control_high_word[1];
-assign wea_ext_ISA = (wea_ext==1'b1 & control_low_word[15]==1'b1) ? 1'b1 : 1'b0;
+assign wea_ext_ISA = (wea_ext==1'b1 & control_low_word[18]==1'b1) ? 1'b1 : 1'b0;
 
 ISA_control ISA_CTRL(clk, rst_ISA, start_ISA, done_ins_computation,
                   address_ext[3:0], dina_ext[41:0], wea_ext_ISA,

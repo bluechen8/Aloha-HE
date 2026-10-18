@@ -139,29 +139,17 @@ module UnifiedTwFctGen #(
     end
   end
 
-  // halting logic:
-  // NOTE: this per-stage case is a fixed ladder enumerating stages 0..12, so it
-  // covers N up to 2^13 (each arm releases halt when the low stage_counter bits of
-  // butterfly_counter are all ones). Smaller N simply uses fewer arms; the generic
-  // top-stage term below tracks TOP_STAGE=LOGN-1. N>2^13 would need more arms.
+  // halting logic: stages 0..4 never halt; stage s >= 5 releases halt when the
+  // low s bits of butterfly_counter are all ones. Covers every stage up to
+  // TOP_STAGE, so any N the counters fit (N <= 2^16).
   logic halt, halt_delayed;
   always_comb begin
     halt = 1'd1;
-    case(stage_counter)
-      4'd0: halt = 1'd0;
-      4'd1: halt = 1'd0;
-      4'd2: halt = 1'd0;
-      4'd3: halt = 1'd0;
-      4'd4: halt = 1'd0;
-      4'd5:  if(butterfly_counter[4:0] == 5'h1f) halt = 1'd0;
-      4'd6:  if(butterfly_counter[5:0] == 6'h3f) halt = 1'd0;
-      4'd7:  if(butterfly_counter[6:0] == 7'h7f) halt = 1'd0;
-      4'd8:  if(butterfly_counter[7:0] == 8'hff) halt = 1'd0;
-      4'd9:  if(butterfly_counter[8:0] == 9'h1ff) halt = 1'd0;
-      4'd10: if(butterfly_counter[9:0] == 10'h3ff) halt = 1'd0;
-      4'd11: if(butterfly_counter[10:0] == 11'h7ff) halt = 1'd0;
-      4'd12: if(butterfly_counter[11:0] == 12'hfff) halt = 1'd0;
-    endcase
+    if (stage_counter < 5) halt = 1'd0;
+    for (int s = 5; s <= TOP_STAGE; s++)
+      if (stage_counter == s &&
+          (butterfly_counter & ((LOGN-1)'((1 << s) - 1))) == (LOGN-1)'((1 << s) - 1))
+        halt = 1'd0;
     // top-stage DIT (forward NTT / iFFT) also releases halt on the first butterfly.
     // Generalized from the hardcoded stage-12 term so it tracks TOP_STAGE = LOGN-1.
     if(~is_DIF && stage_counter == TOP_STAGE && butterfly_counter == '0) halt = 1'd0;

@@ -1,7 +1,7 @@
 """Ordered prime catalog shared by RNS and NTT; installed profiles are a prefix.
 
 Catalog 1 uses q_k = 2^(46+k) - qm_k*2^24 + 1, k=0..7.
-The integrated walker currently supports the first two profiles only.
+A build installs the first L_max = 1..8 profiles.
 """
 from pathlib import Path
 
@@ -24,8 +24,8 @@ def stride(n):
 
 def geometry(n, count):
     installed(count)
-    if n < 128 or n > 8192 or n & (n - 1):
-        raise ValueError('supported N is a power of two in 128..8192')
+    if n < 128 or n > 16384 or n & (n - 1):
+        raise ValueError('supported N is a power of two in 128..16384')
     words = 128 + count * stride(n)
     return words, 1 << (words - 1).bit_length()
 
