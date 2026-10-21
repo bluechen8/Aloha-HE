@@ -171,12 +171,13 @@ assign pwm_negate = OP1[0];
 // stays in reset regardless of this bit.
 wire pwm_enc;
 assign pwm_enc = OP1[1];
-// PWM keygen-convert flag (shared storage, sk-scheme only): the multiplier b is
-// the constant on dina_ext (R^2 mod q of the active limb) and the addend c0 is
-// zero, so result0 = MontMul(s, R^2) without CONST-filling NTT_KEY and NTT_MSG.
-// Reuses OP1[6] (constants_sel/modulus_select, which PWM does not use).
-wire pwm_kg_const;
-assign pwm_kg_const = SRAM_REUSE && OP1[6];
+// PWM scalar flag (shared storage, sk-scheme only): the multiplier b is the
+// scalar on dina_ext and the addend c0 is zero, so result0 = MontMul(a, scalar).
+// Keygen uses it with R^2 mod q for the Montgomery conversion, instead of
+// CONST-filling NTT_KEY and NTT_MSG. Reuses OP1[6] (constants_sel/modulus_select,
+// which PWM does not use).
+wire pwm_scalar_b;
+assign pwm_scalar_b = SRAM_REUSE && OP1[6];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
@@ -743,10 +744,10 @@ RNS #(
     .current_k(current_k),
     .qm(qm),
 
-    // fft bram: keygen has no message, so with shared storage its RNS takes
-    // zeros (the old FFT-over-zeros output) instead of whatever FFT_EXP holds.
+    // fft bram: keygen has no message, so its RNS takes zeros (the old
+    // FFT-over-zeros output) instead of whatever FFT_EXP holds.
     .bram_rd_addr(rns_read_addr),
-    .bram_rd_data((SRAM_REUSE && reuse_keygen) ? {FLP_WORDSIZE{1'b0}} : rns_read_data),
+    .bram_rd_data(reuse_keygen ? {FLP_WORDSIZE{1'b0}} : rns_read_data),
 
     // message bram:
     .bram_wr_addr(rns_write_addr),
@@ -884,12 +885,12 @@ end else begin : g_pwm_sk
       .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
 
       .b_bram_rd_addr(pwm_b_rd_addr),
-      .b0_bram_rd_data(pwm_kg_const ? dina_ext[LOGQ-1:0] :
+      .b0_bram_rd_data(pwm_scalar_b ? dina_ext[LOGQ-1:0] :
                        (pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0)),
       .b1_bram_rd_data(fft_im_rd_data),
 
       .c_bram_rd_addr(pwm_c_rd_addr),
-      .c0_bram_rd_data(pwm_kg_const ? {LOGQ{1'b0}} :
+      .c0_bram_rd_data(pwm_scalar_b ? {LOGQ{1'b0}} :
                        (pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0)),
 
       .result_bram_wr_addr(pwm_result_wr_addr),
