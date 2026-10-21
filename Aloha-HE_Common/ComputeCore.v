@@ -171,6 +171,12 @@ assign pwm_negate = OP1[0];
 // stays in reset regardless of this bit.
 wire pwm_enc;
 assign pwm_enc = OP1[1];
+// PWM keygen-convert flag (shared storage, sk-scheme only): the multiplier b is
+// the constant on dina_ext (R^2 mod q of the active limb) and the addend c0 is
+// zero, so result0 = MontMul(s, R^2) without CONST-filling NTT_KEY and NTT_MSG.
+// Reuses OP1[6] (constants_sel/modulus_select, which PWM does not use).
+wire pwm_kg_const;
+assign pwm_kg_const = SRAM_REUSE && OP1[6];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
@@ -193,10 +199,9 @@ wire random_sampling_rst;
 wire random_sampling_done;
 wire [159:0] random_sampling_seed;
 wire sample_errors; // true: sample e0, e1, v; false: sample pk1
-// Encrypt/keygen retain their original transform-coupled sampling schedule.
-// Refresh uses sample-only opcode 6 to sample e0 without starting FFT. Moving
-// keygen to sample-only also needs its integer secret/RNS path separated from
-// the currently scheduled floating message conversion.
+// Encrypt retains its transform-coupled sampling schedule. With shared storage,
+// refresh and keygen use sample-only opcode 6 to sample without starting FFT;
+// keygen's RNS then reads zeros in place of the FFT output (see rns below).
 assign random_sampling_rst = sample_only ? 1'b0 : (do_fft && is_dif) || (~do_fft && ~is_dif) ? transform_rst : 1'd1;
 assign random_sampling_seed = SEED_SIDEBAND ? prng_seed : {96'd0, dina_ext};
 assign sample_errors = do_fft || sample_only;
@@ -738,9 +743,10 @@ RNS #(
     .current_k(current_k),
     .qm(qm),
 
-    // fft bram:
+    // fft bram: keygen has no message, so with shared storage its RNS takes
+    // zeros (the old FFT-over-zeros output) instead of whatever FFT_EXP holds.
     .bram_rd_addr(rns_read_addr),
-    .bram_rd_data(rns_read_data),
+    .bram_rd_data((SRAM_REUSE && reuse_keygen) ? {FLP_WORDSIZE{1'b0}} : rns_read_data),
 
     // message bram:
     .bram_wr_addr(rns_write_addr),
@@ -878,11 +884,13 @@ end else begin : g_pwm_sk
       .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
 
       .b_bram_rd_addr(pwm_b_rd_addr),
-      .b0_bram_rd_data(pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0),
+      .b0_bram_rd_data(pwm_kg_const ? dina_ext[LOGQ-1:0] :
+                       (pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0)),
       .b1_bram_rd_data(fft_im_rd_data),
 
       .c_bram_rd_addr(pwm_c_rd_addr),
-      .c0_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0),
+      .c0_bram_rd_data(pwm_kg_const ? {LOGQ{1'b0}} :
+                       (pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0)),
 
       .result_bram_wr_addr(pwm_result_wr_addr),
       .result0_bram_wr_data(pwm_c0_wr_data),
