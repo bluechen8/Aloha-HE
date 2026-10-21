@@ -569,12 +569,6 @@ wire [LOGQ-1:0] pwm_bf0_ina, pwm_bf0_inb, pwm_bf0_tw, pwm_bf0_result, pwm_bf1_in
 wire [107:0] rns_significant;
 wire [23:0] rns_significant_low;
 wire [LOGQ-1:0] rns_mult_factor, rns_mult_result;
-// C'-3: declare the lifted twiddle-ROM address BEFORE it is used in the
-// UnifiedTransformation port map below. Aloha compiles under `default_nettype
-// wire, so a use-before-declaration would silently infer a 1-BIT implicit net
-// and truncate this 7-12 bit address to bit 0 (VCS did exactly that; Verilator
-// resolved against the explicit decl, hence the sim-only mismatch).
-wire [LOGN-2:0] ftw_rom_addr_lifted;
 UnifiedTransformation #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
     .ADDR_WIDTH_ROM(`FHE_CROM_AW),
@@ -675,15 +669,13 @@ UnifiedTransformation #(
     .rns_mult_factor(rns_mult_factor),
     .rns_mult_result(rns_mult_result),
 
-    // C'-3: stored FFT-twiddle ROM lifted to the top boundary; zero-extend the
-    // LOGN-1 bit addr into the fixed 12b interface signal via an assign.
-    .ftw_rom_addr(ftw_rom_addr_lifted),
-    .ftw_rom_data(m_aloha_mem.ftwrom_douta),
+    // The integration has no stored FFT-twiddle table: it builds with
+    // FFT_ON_THE_FLY_GENERATION=1, which never reads this port.
+    .ftw_rom_addr(),
+    .ftw_rom_data(128'd0),
 
     .done(transformation_done)
   );
-  // C'-3: ftw_rom_addr_lifted declared above (before its use in the port map).
-  assign m_aloha_mem.ftwrom_addra = ftw_rom_addr_lifted;
 
 
 /******************** RNS Unit ***************/

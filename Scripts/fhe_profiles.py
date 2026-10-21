@@ -9,6 +9,7 @@ PRIMES = (0x3ffff7000001, 0x7fffff000001, 0xffffd8000001, 0x1fffffb000001,
           0x3ffffe4000001, 0x7fffff9000001, 0xffffff3000001, 0x1ffffff6000001)
 CATALOG_ID = 1
 LAYOUT_VERSION = 2
+MAGIC = 0x46484532  # "FHE2", first word of the firmware CROM image manifest
 
 
 def installed(count):
@@ -39,10 +40,3 @@ def rns_words(q):
 def read_coe(path):
     """Hex words of a Xilinx .coe file (the vector after the last '=')."""
     return Path(path).read_text().split('=')[-1].replace(';', ' ').replace(',', ' ').split()
-
-
-def descriptor(n, count, generated):
-    geometry(n, count)
-    return ((0x46484532 << 32) | (LAYOUT_VERSION << 24) |
-            ((n.bit_length() - 1) << 16) | (count << 8) |
-            (CATALOG_ID << 1) | int(generated))
