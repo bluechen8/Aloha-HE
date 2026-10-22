@@ -1036,15 +1036,22 @@ IntToFlPWrapper #(
 
 
 /******************** Read logic for Debug and DMA interface ***************/
+// The bank read data arrives BRAM_RD_LAT cycles after its address, so select it
+// with the bank and address bits of that read, like the DMA port below. A
+// reader that holds its address (one word per three steps) sees no change; one
+// that issues an address every cycle gets each word from the right bank.
+wire [2:0] ext_rd_sel;
+wire [1:0] ext_rd_lo;
+DelayRegister #(.CYCLE_COUNT(BRAM_RD_LAT), .BITWIDTH(5)) ext_rd_sel_delay (.clk(clk), .in({bram_sel, ext_rdwr_addr[1:0]}), .out({ext_rd_sel, ext_rd_lo}));
 assign doutb_ext = !PROVIDE_DEBUG_IO ? 64'dX :  
-                   bram_sel == FFT_BRAM_ID     ? (ext_rdwr_addr[1] == 0 ? (ext_rdwr_addr[0] == 0 ? fft_rd_data_bank0[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank0[FLP_WORDSIZE-1:0]) :
-                                                                          (ext_rdwr_addr[0] == 0 ? fft_rd_data_bank1[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank1[FLP_WORDSIZE-1:0])) :
-                   bram_sel == NTT_MSG_BRAM_ID ? (ext_rdwr_addr[0] == 0 ? {10'd0, ntt_m_rd_data_bank0}  : {10'd0, ntt_m_rd_data_bank1}) : 
-                   bram_sel == NTT_V_BRAM_ID   ? (ext_rdwr_addr[0] == 0 ? {10'd0, ntt_v_rd_data_bank0}  : {10'd0, ntt_v_rd_data_bank1}) : 
-                   bram_sel == NTT_E1_BRAM_ID  ? (ext_rdwr_addr[0] == 0 ? {10'd0, ntt_e1_rd_data_bank0} : {10'd0, ntt_e1_rd_data_bank1}) : 
-                   bram_sel == NTT_KEY_BRAM_ID ? (ext_rdwr_addr[0] == 0 ? {10'd0, ntt_key_rd_data_bank0} : {10'd0, ntt_key_rd_data_bank1}) : 
-                   bram_sel == ERROR_BRAM_ID   ? {50'd0, v_bram_rd_data, e0_bram_rd_data, e1_bram_rd_data} : 
-                   bram_sel == FFT_IM_BRAM_ID  ? {10'd0, fft_im_rd_data} :
+                   ext_rd_sel == FFT_BRAM_ID     ? (ext_rd_lo[1] == 0 ? (ext_rd_lo[0] == 0 ? fft_rd_data_bank0[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank0[FLP_WORDSIZE-1:0]) :
+                                                                          (ext_rd_lo[0] == 0 ? fft_rd_data_bank1[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank1[FLP_WORDSIZE-1:0])) :
+                   ext_rd_sel == NTT_MSG_BRAM_ID ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_m_rd_data_bank0}  : {10'd0, ntt_m_rd_data_bank1}) : 
+                   ext_rd_sel == NTT_V_BRAM_ID   ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_v_rd_data_bank0}  : {10'd0, ntt_v_rd_data_bank1}) : 
+                   ext_rd_sel == NTT_E1_BRAM_ID  ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_e1_rd_data_bank0} : {10'd0, ntt_e1_rd_data_bank1}) : 
+                   ext_rd_sel == NTT_KEY_BRAM_ID ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_key_rd_data_bank0} : {10'd0, ntt_key_rd_data_bank1}) : 
+                   ext_rd_sel == ERROR_BRAM_ID   ? {50'd0, v_bram_rd_data, e0_bram_rd_data, e1_bram_rd_data} : 
+                   ext_rd_sel == FFT_IM_BRAM_ID  ? {10'd0, fft_im_rd_data} :
                    64'd0;
 
 wire dma_rd_bank_sel, dma_rd_bank_sel_fft;
