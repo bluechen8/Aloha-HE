@@ -4,6 +4,9 @@
 
 module ComputeCore #(
     parameter SRAM_REUSE = 0, // enabled only by the integrated secret-key walker
+    // 1 = command_in comes from a register that holds it for the whole pass
+    // (the integrated walker), so the core's own command register is bypassed.
+    parameter EXT_COMMAND = 0,
 //////////////////////////// Config Start //////////////////////////////////
   // Set this to 1 for generating FFT twiddle factors on the fly
   // Set this to 0 for using stored FFT twiddle factors
@@ -118,23 +121,27 @@ wire grant_ext;
 assign grant_ext = PROVIDE_DEBUG_IO ? grant_ext_io : 1'd0;
 
 
-// command register:
-reg [39:0] command_reg;
+// command register (EXT_COMMAND: the caller holds the command for the pass):
+wire [39:0] command;
 wire [2:0] opcode;
 wire [9:0] OP1, OP2, OP3;
 wire [6:0] OP4;
 
-always @(posedge clk) begin
-  if(rst)
-    command_reg <= 40'd0;
-	else if(command_we)
-		command_reg <= command_in;
-	else
-	  command_reg <= command_reg;	
-end
+generate if (EXT_COMMAND) begin : ext_command
+  assign command = command_in;
+end else begin : command_register
+  reg [39:0] command_reg;
+  always @(posedge clk) begin
+    if(rst)
+      command_reg <= 40'd0;
+    else if(command_we)
+      command_reg <= command_in;
+  end
+  assign command = command_reg;
+end endgenerate
 
 // reset signals and instruction decoding:
-assign {OP4, OP3, OP2, OP1, opcode} = command_reg;	
+assign {OP4, OP3, OP2, OP1, opcode} = command;
 
 wire transform_rst, transformation_done;
 wire rns_rst, rns_done;
