@@ -11,7 +11,7 @@ module ComputeCoreWrapper #(
     // 1 = the integrated walker holds ComputeCore's command for each pass
     // (ext_command, 0 between passes, so its opcode rising marks the start) and
     // ISA_control with its INS_RAM is not built; status[0] is then "this pass
-    // is done".
+    // is done", unregistered, and clears while the command is 0.
     parameter EXT_COMMAND = 0
   ) (clk,
                     reseed_en, prng_rst_i,   // C'-2 free-run PRNG controls (pass-through to CORE)
@@ -51,7 +51,7 @@ fhe_aloha_mem_if.req m_aloha_mem;   // C'-3: pass-through to CORE
 
 wire [63:0] dina_ext = {dina_ext_high_word,dina_ext_low_word};
 wire [63:0] dout_ext;
-reg [31:0] status;
+reg [31:0] status_q;
 wire rst_core;
 
 wire [LOGN:0] address_ext;
@@ -75,7 +75,8 @@ assign bram_sel = control_low_word[31:29];
 assign {dout_ext_high_word,dout_ext_low_word} = dout_ext;
 
 always @(posedge clk)
-    status <= status_wire;
+    status_q <= status_wire;
+assign status = EXT_COMMAND ? status_wire : status_q;
     
 ComputeCore #(
     .FFT_ON_THE_FLY_GENERATION(FFT_ON_THE_FLY_GENERATION),
@@ -114,14 +115,14 @@ assign rst_core = control_high_word[0];
 
 generate if (EXT_COMMAND) begin : ext_command_path
   // Same timing as ISA_control: done counts from the third cycle after the
-  // command is loaded, and holds until the core is reset.
+  // command is loaded, and holds until the command drops to 0.
   reg [1:0] issued;
   reg armed, pass_done;
   always @(posedge clk) begin
-    if (rst_core) begin
+    if (rst_core || ext_command[2:0] == 3'd0) begin
       issued <= 2'd0; armed <= 1'b0; pass_done <= 1'b0;
     end else begin
-      issued <= {issued[0], |ext_command[2:0]};
+      issued <= {issued[0], 1'b1};
       if (issued[1]) armed <= 1'b1;
       if (armed && done_ins_computation) pass_done <= 1'b1;
     end
