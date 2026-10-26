@@ -150,6 +150,7 @@ module tb_RNS #(parameter N = 8192)();
 
     .current_k(current_k),
     .qm(qm),
+    .v_scale(54'd1),
 
     .bram_rd_addr(bram_rd_addr),
     .bram_rd_data(rns_read_data),

@@ -11,6 +11,7 @@ module RNSErrorPolys #(
     input clk,
     input rst,
     input [LOGQ-1:0] q,
+    input [LOGQ-1:0] v_scale,   // ternary 1 maps to v_scale and -1 to q - v_scale
     input [LOGN-1:0] read_addr_DP,
     input done_internal,
 
@@ -33,8 +34,10 @@ module RNSErrorPolys #(
   assign v_coeff = v_bram_rd_data;
   assign e1_coeff = e1_bram_rd_data;
 
-  // sign + magnitude representation:
-  assign v_bram_wr_data = v_coeff[1] == 1'd0 ? {53'd0, v_coeff[0]} : {q[LOGQ-1:1], 1'd0}; // exploit structure of q: {q[LOGQ-1:1], 1'd0} == q-1
+  // sign + magnitude representation. v_scale = 1 gives {0, 1, q-1}; the
+  // one-limb resident key uses R mod q, so the NTT that follows yields the
+  // Montgomery-form key with no multiply pass.
+  assign v_bram_wr_data = v_coeff[1] == 1'd0 ? (v_coeff[0] ? v_scale : {LOGQ{1'b0}}) : q - v_scale;
   assign e1_bram_wr_data = e1_coeff[5] == 1'd0 ? {49'd0, e1_coeff[4:0]} : q - e1_coeff[4:0];
 
   logic done_internal_DP;

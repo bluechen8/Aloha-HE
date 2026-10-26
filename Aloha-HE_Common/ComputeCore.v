@@ -40,7 +40,7 @@ module ComputeCore #(
 					done_ins_computation,                                // instruction computation finished
 					grant_ext_io,                                        // grant BRAM access to send64/receive64 or to DMA
           dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en, // DMA interface
-          reuse_keygen, reuse_limb, m_aloha_mem                                          // C'-3: storage banks lifted to top (SyncReadMem)
+          k_kg, k_kw, k_scale, m_aloha_mem                                               // C'-3: storage banks lifted to top (SyncReadMem)
 					);
 
 
@@ -74,8 +74,14 @@ localparam DMA_FFT_BRAM_ID = 2'd3;
 
 
 input clk, rst;
-input reuse_keygen;
-input [3:0] reuse_limb;
+// One-limb resident key K (SRAM_REUSE only; tie to 0 otherwise). K.sample
+// [63:56] holds the ternary secret in coefficient order, K.low [53:0] one key
+// limb. k_kg runs the pass in KEYGEN mode: RNS reads zeros for its float input
+// and the sample pass writes the ternary secret to K.sample.
+// k_kw lets the RNS v lane, the NTT third lane and the CenterLift K lane write
+// K.low. k_scale is R mod q of the pass's limb, the unit of the ternary map.
+input k_kg, k_kw;
+input [53:0] k_scale;
 // C'-2 free-run PRNG controls (default-tie for legacy: reseed_en=1, prng_rst_i=rst):
 //   reseed_en  - 1 => this sampling pass reloads the Trivium from `seed` (the
 //                per-pass-reload default, keystream restarts at word0). 0 => the
@@ -154,7 +160,7 @@ wire lift_active = SRAM_REUSE && opcode == 3'd7;
 wire lift_snapshot = lift_active && OP1[0];
 wire lift_done, lift_we;
 wire [LOGN-1:0] lift_rd_addr, lift_wr_addr;
-wire [53:0] lift_data;
+wire [53:0] lift_data, lift_k_data;
 wire [53:0] lift_q;
 assign prj_rst       = opcode==3'd5 ? 1'b0 : 1'b1;
 assign pwm_rst       = opcode==3'd4 ? 1'b0 : 1'b1;
@@ -178,13 +184,6 @@ assign pwm_negate = OP1[0];
 // stays in reset regardless of this bit.
 wire pwm_enc;
 assign pwm_enc = OP1[1];
-// PWM scalar flag (shared storage, sk-scheme only): the multiplier b is the
-// scalar on dina_ext and the addend c0 is zero, so result0 = MontMul(a, scalar).
-// Keygen uses it with R^2 mod q for the Montgomery conversion, instead of
-// CONST-filling NTT_KEY and NTT_MSG. Reuses OP1[6] (constants_sel/modulus_select,
-// which PWM does not use).
-wire pwm_scalar_b;
-assign pwm_scalar_b = SRAM_REUSE && OP1[6];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
@@ -299,7 +298,8 @@ CenterLift #(.LOGN(LOGN), .BRAM_RD_LAT(BRAM_RD_LAT)) center_lift (
     .clk(clk), .rst(!lift_active), .snapshot(lift_snapshot), .target_q(lift_q),
     .rd_addr(lift_rd_addr), .wr_addr(lift_wr_addr),
     .msg0(m_aloha_mem.ntt_msg0_doutb), .msg1(m_aloha_mem.ntt_msg1_doutb),
-    .saved(rns_read_data), .wr_data(lift_data), .wr_en(lift_we), .done(lift_done)
+    .saved(rns_read_data), .wr_data(lift_data), .wr_en(lift_we), .done(lift_done),
+    .k0(m_aloha_mem.ntt_v0_doutb), .k1(m_aloha_mem.ntt_v1_doutb), .k_scale(k_scale), .k_data(lift_k_data)
 );
 
 
@@ -430,17 +430,7 @@ wire [LOGQ-1:0] rns_v_wr_data_bank0, rns_v_wr_data_bank1;
 wire [LOGQ-1:0] ntt_v_rd_data_bank0, ntt_v_rd_data_bank1;
 wire ntt_v_wea_bank0, ntt_v_wea_bank1;
 wire rns_v_wea_bank0, rns_v_wea_bank1;
-// C'-3: ntt_v banks lifted to top (was NTTPolyBank ntt_v_bank0/1).
-assign m_aloha_mem.ntt_v0_addra = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | {1'b0,(~pwm_rst ? pwm_result_wr_addr[LOGN-1:1] : (~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))))}) : (~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_v0_addrb = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | (~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))) : (~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_v0_dina = SRAM_REUSE ? (~pwm_rst ? pwm_c0_wr_data : (~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))) : (~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign m_aloha_mem.ntt_v0_wea = SRAM_REUSE ? (reuse_keygen && (~pwm_rst ? (pwm_r_wea && pwm_result_wr_addr[0] == 1'b0) : (~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0))))) : (~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0)));
-assign ntt_v_rd_data_bank0 = m_aloha_mem.ntt_v0_doutb;
-assign m_aloha_mem.ntt_v1_addra = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | {1'b0,(~pwm_rst ? pwm_result_wr_addr[LOGN-1:1] : (~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]))))}) : (~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_v1_addrb = SRAM_REUSE ? (($clog2(`FHE_N*`FHE_L/2)'(reuse_limb) << (LOGN-1)) | (~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])))) : (~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1])));
-assign m_aloha_mem.ntt_v1_dina = SRAM_REUSE ? (~pwm_rst ? pwm_c0_wr_data : (~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])))) : (~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0])));
-assign m_aloha_mem.ntt_v1_wea = SRAM_REUSE ? (reuse_keygen && (~pwm_rst ? (pwm_r_wea && pwm_result_wr_addr[0] == 1'b1) : (~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1))))) : (~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1)));
-assign ntt_v_rd_data_bank1 = m_aloha_mem.ntt_v1_doutb;
+wire [1:0] k_sample_read;   // K.sample at the v lane's read (SRAM_REUSE)
 
 
 // NTT BRAMs e1 (Modular Ring BRAM 1):
@@ -517,6 +507,58 @@ wire [5:0] e0_bram_wr_data,e1_bram_wr_data;
 wire [1:0] v_bram_wr_data;
 wire [5:0] e0_bram_rd_data,e1_bram_rd_data;
 wire [1:0] v_bram_rd_data;
+generate if (SRAM_REUSE) begin : one_limb_key
+// K is the one-limb resident key, N/2 64-bit rows per parity. Each pass drives
+// at most one K writer and one K reader:
+//   SAMPLE (k_kg)  ternary s -> K.sample, mask 0x80;
+//   RNS            v lane reads K.sample, writes s*k_scale mod q to K.low (k_kw);
+//   NTT            third lane transforms K.low in place (k_kw);
+//   LIFT           K lane reads K.sample, writes K.low (k_kw);
+//   PWM            reads K.low as a.
+// Every other writer touches K.low only (mask 0x7f).
+wire k_sample_write = k_kg && sample_only && v_bram_wea;
+wire [LOGN-2:0] k_sample_row = v_bram_wr_addr[LOGN-1:1];
+wire [LOGN-2:0] k_lift_row = lift_wr_addr[LOGN-1:1];
+wire [LOGN-2:0] k_v_rd_row = v_bram_rd_addr[LOGN-1:1];
+wire [LOGN-2:0] k_lift_rd_row = lift_rd_addr[LOGN-1:1];
+wire k_lift_we = k_kw && lift_active && !lift_snapshot && lift_we;
+assign m_aloha_mem.ntt_v0_addra = k_sample_write ? k_sample_row : ~transform_rst ? ntt_v_write_addr_bank0 : ~rns_rst ? rns_v_write_addr_bank0 : k_lift_row;
+assign m_aloha_mem.ntt_v0_addrb = ~transform_rst ? ntt_v_read_addr_bank0 : ~rns_rst ? k_v_rd_row : lift_active ? k_lift_rd_row : pwm_v_read_addr_bank0;
+assign m_aloha_mem.ntt_v0_dina  = k_sample_write ? {6'd0, v_bram_wr_data, 56'd0} :
+                                  {10'd0, ~transform_rst ? ntt_v_wr_data_bank0 : ~rns_rst ? rns_v_wr_data_bank0 : lift_k_data};
+assign m_aloha_mem.ntt_v0_wea   = k_sample_write ? !v_bram_wr_addr[0] :
+                                  ~transform_rst ? k_kw && ntt_v_wea_bank0 : ~rns_rst ? k_kw && rns_v_wea_bank0 :
+                                  k_lift_we && !lift_wr_addr[0];
+assign m_aloha_mem.ntt_v0_mask  = k_sample_write ? 8'h80 : 8'h7f;
+assign m_aloha_mem.ntt_v1_addra = k_sample_write ? k_sample_row : ~transform_rst ? ntt_v_write_addr_bank1 : ~rns_rst ? rns_v_write_addr_bank1 : k_lift_row;
+assign m_aloha_mem.ntt_v1_addrb = ~transform_rst ? ntt_v_read_addr_bank1 : ~rns_rst ? k_v_rd_row : lift_active ? k_lift_rd_row : pwm_v_read_addr_bank1;
+assign m_aloha_mem.ntt_v1_dina  = k_sample_write ? {6'd0, v_bram_wr_data, 56'd0} :
+                                  {10'd0, ~transform_rst ? ntt_v_wr_data_bank1 : ~rns_rst ? rns_v_wr_data_bank1 : lift_k_data};
+assign m_aloha_mem.ntt_v1_wea   = k_sample_write ? v_bram_wr_addr[0] :
+                                  ~transform_rst ? k_kw && ntt_v_wea_bank1 : ~rns_rst ? k_kw && rns_v_wea_bank1 :
+                                  k_lift_we && lift_wr_addr[0];
+assign m_aloha_mem.ntt_v1_mask  = k_sample_write ? 8'h80 : 8'h7f;
+// The v lane reads K.sample in coefficient order: select the parity of the
+// read issued BRAM_RD_LAT cycles ago, like the M sample byte.
+wire k_sample_bank;
+DelayRegister #(.CYCLE_COUNT(BRAM_RD_LAT), .BITWIDTH(1)) k_sample_bank_delay
+  (.clk(clk), .in(v_bram_rd_addr[0]), .out(k_sample_bank));
+assign k_sample_read = k_sample_bank ? m_aloha_mem.ntt_v1_doutb[57:56] : m_aloha_mem.ntt_v0_doutb[57:56];
+end else begin : reference_v
+assign m_aloha_mem.ntt_v0_addra = ~transform_rst ? ntt_v_write_addr_bank0 : (~rns_rst ? rns_v_write_addr_bank0 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v0_addrb = ~transform_rst ? ntt_v_read_addr_bank0  : (~pwm_rst ? pwm_v_read_addr_bank0  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v0_dina  = {10'd0, ~transform_rst ? ntt_v_wr_data_bank0    : (~rns_rst ? rns_v_wr_data_bank0    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))};
+assign m_aloha_mem.ntt_v0_wea   = ~transform_rst ? ntt_v_wea_bank0        : (~rns_rst ? rns_v_wea_bank0        : (grant_ext ? ntt_v_ext_wea_bank0 : ntt_v_dma_wea_bank0));
+assign m_aloha_mem.ntt_v0_mask  = 8'h7f;
+assign m_aloha_mem.ntt_v1_addra = ~transform_rst ? ntt_v_write_addr_bank1 : (~rns_rst ? rns_v_write_addr_bank1 : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v1_addrb = ~transform_rst ? ntt_v_read_addr_bank1  : (~pwm_rst ? pwm_v_read_addr_bank1  : (grant_ext ? ext_rdwr_addr[LOGN-1:1] : dma_rdwr_addr[LOGN-1:1]));
+assign m_aloha_mem.ntt_v1_dina  = {10'd0, ~transform_rst ? ntt_v_wr_data_bank1    : (~rns_rst ? rns_v_wr_data_bank1    : (grant_ext ? dina_ext[LOGQ-1:0]  : dina_dma[LOGQ-1:0]))};
+assign m_aloha_mem.ntt_v1_wea   = ~transform_rst ? ntt_v_wea_bank1        : (~rns_rst ? rns_v_wea_bank1        : (grant_ext ? ntt_v_ext_wea_bank1 : ntt_v_dma_wea_bank1));
+assign m_aloha_mem.ntt_v1_mask  = 8'h7f;
+assign k_sample_read = 2'd0;
+end endgenerate
+assign ntt_v_rd_data_bank0 = m_aloha_mem.ntt_v0_doutb[53:0];
+assign ntt_v_rd_data_bank1 = m_aloha_mem.ntt_v1_doutb[53:0];
 // C'-3: e0/e1/v single-port banks lifted to top (was CBDPolyBRAM/TernaryPolyBRAM).
 assign m_aloha_mem.e0_wea   = e0_bram_wea;
 assign m_aloha_mem.e0_addra = ~random_sampling_rst ? e0_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? e0_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
@@ -544,7 +586,7 @@ endgenerate
 assign m_aloha_mem.vt_wea   = v_bram_wea;
 assign m_aloha_mem.vt_addra = ~random_sampling_rst ? v_bram_wr_addr : (~rns_rst || !PROVIDE_DEBUG_IO ? v_bram_rd_addr : ext_rdwr_addr[LOGN-1:0]);
 assign m_aloha_mem.vt_dina  = v_bram_wr_data;
-assign v_bram_rd_data = SRAM_REUSE ? sample_read_data[1:0] : m_aloha_mem.vt_douta;
+assign v_bram_rd_data = m_aloha_mem.vt_douta;
 
 
 // Constants ROM:
@@ -750,11 +792,13 @@ RNS #(
 
     .current_k(current_k),
     .qm(qm),
+    // {0, 1, q-1} unless the one-limb key folds R into the map
+    .v_scale(SRAM_REUSE ? k_scale : {{(LOGQ-1){1'b0}}, 1'b1}),
 
     // fft bram: keygen has no message, so its RNS takes zeros (the old
     // FFT-over-zeros output) instead of whatever FFT_EXP holds.
     .bram_rd_addr(rns_read_addr),
-    .bram_rd_data(reuse_keygen ? {FLP_WORDSIZE{1'b0}} : rns_read_data),
+    .bram_rd_data(SRAM_REUSE && k_kg ? {FLP_WORDSIZE{1'b0}} : rns_read_data),
 
     // message bram:
     .bram_wr_addr(rns_write_addr),
@@ -767,7 +811,7 @@ RNS #(
     .e1_bram_rd_addr(e1_bram_rd_addr),
     .e1_bram_rd_data(e1_bram_rd_data),
     .v_bram_rd_addr(v_bram_rd_addr),
-    .v_bram_rd_data(v_bram_rd_data),
+    .v_bram_rd_data(SRAM_REUSE ? k_sample_read : v_bram_rd_data),
 
     .v_bram_wr_addr(rns_v_write_addr),
     .v_bram_wr_data(rns_v_write_data),
@@ -892,13 +936,11 @@ end else begin : g_pwm_sk
       .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
 
       .b_bram_rd_addr(pwm_b_rd_addr),
-      .b0_bram_rd_data(pwm_scalar_b ? dina_ext[LOGQ-1:0] :
-                       (pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0)),
+      .b0_bram_rd_data(pwm_b_bank_sel_delayed ? ntt_key_rd_data_bank1 : ntt_key_rd_data_bank0),
       .b1_bram_rd_data(fft_im_rd_data),
 
       .c_bram_rd_addr(pwm_c_rd_addr),
-      .c0_bram_rd_data(pwm_scalar_b ? {LOGQ{1'b0}} :
-                       (pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0)),
+      .c0_bram_rd_data(pwm_c_bank_sel_delayed ? ntt_m_rd_data_bank1 : ntt_m_rd_data_bank0),
 
       .result_bram_wr_addr(pwm_result_wr_addr),
       .result0_bram_wr_data(pwm_c0_wr_data),
@@ -1054,7 +1096,8 @@ assign doutb_ext = !PROVIDE_DEBUG_IO ? 64'dX :
                    ext_rd_sel == FFT_BRAM_ID     ? (ext_rd_lo[1] == 0 ? (ext_rd_lo[0] == 0 ? fft_rd_data_bank0[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank0[FLP_WORDSIZE-1:0]) :
                                                                           (ext_rd_lo[0] == 0 ? fft_rd_data_bank1[2*FLP_WORDSIZE-1:FLP_WORDSIZE] : fft_rd_data_bank1[FLP_WORDSIZE-1:0])) :
                    ext_rd_sel == NTT_MSG_BRAM_ID ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_m_rd_data_bank0}  : {10'd0, ntt_m_rd_data_bank1}) : 
-                   ext_rd_sel == NTT_V_BRAM_ID   ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_v_rd_data_bank0}  : {10'd0, ntt_v_rd_data_bank1}) : 
+                   // K holds the secret key with SRAM_REUSE: never read out.
+                   ext_rd_sel == NTT_V_BRAM_ID   ? (SRAM_REUSE ? 64'd0 : ext_rd_lo[0] == 0 ? {10'd0, ntt_v_rd_data_bank0}  : {10'd0, ntt_v_rd_data_bank1}) : 
                    ext_rd_sel == NTT_E1_BRAM_ID  ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_e1_rd_data_bank0} : {10'd0, ntt_e1_rd_data_bank1}) : 
                    ext_rd_sel == NTT_KEY_BRAM_ID ? (ext_rd_lo[0] == 0 ? {10'd0, ntt_key_rd_data_bank0} : {10'd0, ntt_key_rd_data_bank1}) : 
                    ext_rd_sel == ERROR_BRAM_ID   ? {50'd0, v_bram_rd_data, e0_bram_rd_data, e1_bram_rd_data} : 
@@ -1070,29 +1113,27 @@ assign doutb_dma = dma_bram_sel == DMA_FFT_BRAM_ID ? (dma_rd_bank_sel_fft == 0 ?
                    64'dX; // V BRAM is write-only via dma
 
 
-// Sample and residue fields share M without read-modify-write. The selected
-// sample remains indexed in coefficient order across in-place transforms.
-wire [LOGN-1:0] sample_addr = reuse_keygen ? v_bram_rd_addr : e0_bram_rd_addr;
-wire [LOGN-1:0] sample_write_addr = reuse_keygen ? v_bram_wr_addr : e0_bram_wr_addr;
-wire sample_write = !random_sampling_rst && (reuse_keygen ? v_bram_wea : e0_bram_wea);
-wire [7:0] sample_write_data = reuse_keygen ? {6'd0,v_bram_wr_data} : {2'd0,e0_bram_wr_data};
+// Sample and residue fields share M without read-modify-write. The e0 sample
+// remains indexed in coefficient order across in-place transforms. The KEYGEN
+// sample pass writes K.sample instead (one_limb_key).
+wire sample_write = !random_sampling_rst && !k_kg && e0_bram_wea;
 wire sample_read_bank;
 DelayRegister #(.CYCLE_COUNT(BRAM_RD_LAT), .BITWIDTH(1)) sample_bank_delay
-  (.clk(clk), .in(sample_addr[0]), .out(sample_read_bank));
+  (.clk(clk), .in(e0_bram_rd_addr[0]), .out(sample_read_bank));
 assign sample_read_data = sample_read_bank ? m_aloha_mem.ntt_msg1_doutb[63:56] : m_aloha_mem.ntt_msg0_doutb[63:56];
 generate if (SRAM_REUSE) begin : shared_message
-assign m_aloha_mem.ntt_msg0_wea = sample_write ? (sample_write_addr[0] == 1'b0) :
-  (msg0_wea && !(!transform_rst && do_fft) && !(reuse_keygen && !pwm_rst));
+assign m_aloha_mem.ntt_msg0_wea = sample_write ? !e0_bram_wr_addr[0] :
+  (msg0_wea && !(!transform_rst && do_fft));
 assign m_aloha_mem.ntt_msg0_mask = sample_write ? 8'h80 : 8'h7f;
-assign m_aloha_mem.ntt_msg0_addra = sample_write ? sample_write_addr[LOGN-1:1] : msg0_addra;
-assign m_aloha_mem.ntt_msg0_dina = sample_write ? {sample_write_data,56'd0} : {10'd0,msg0_dina};
-assign m_aloha_mem.ntt_msg0_addrb = !rns_rst ? sample_addr[LOGN-1:1] : msg0_addrb;
-assign m_aloha_mem.ntt_msg1_wea = sample_write ? (sample_write_addr[0] == 1'b1) :
-  (msg1_wea && !(!transform_rst && do_fft) && !(reuse_keygen && !pwm_rst));
+assign m_aloha_mem.ntt_msg0_addra = sample_write ? e0_bram_wr_addr[LOGN-1:1] : msg0_addra;
+assign m_aloha_mem.ntt_msg0_dina = sample_write ? {2'd0,e0_bram_wr_data,56'd0} : {10'd0,msg0_dina};
+assign m_aloha_mem.ntt_msg0_addrb = !rns_rst ? e0_bram_rd_addr[LOGN-1:1] : msg0_addrb;
+assign m_aloha_mem.ntt_msg1_wea = sample_write ? e0_bram_wr_addr[0] :
+  (msg1_wea && !(!transform_rst && do_fft));
 assign m_aloha_mem.ntt_msg1_mask = sample_write ? 8'h80 : 8'h7f;
-assign m_aloha_mem.ntt_msg1_addra = sample_write ? sample_write_addr[LOGN-1:1] : msg1_addra;
-assign m_aloha_mem.ntt_msg1_dina = sample_write ? {sample_write_data,56'd0} : {10'd0,msg1_dina};
-assign m_aloha_mem.ntt_msg1_addrb = !rns_rst ? sample_addr[LOGN-1:1] : msg1_addrb;
+assign m_aloha_mem.ntt_msg1_addra = sample_write ? e0_bram_wr_addr[LOGN-1:1] : msg1_addra;
+assign m_aloha_mem.ntt_msg1_dina = sample_write ? {2'd0,e0_bram_wr_data,56'd0} : {10'd0,msg1_dina};
+assign m_aloha_mem.ntt_msg1_addrb = !rns_rst ? e0_bram_rd_addr[LOGN-1:1] : msg1_addrb;
 
 end else begin : reference_message
 assign m_aloha_mem.ntt_msg0_wea = msg0_wea;

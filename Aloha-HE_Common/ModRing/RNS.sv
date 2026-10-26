@@ -22,6 +22,7 @@ module RNS #(
 
     input [3:0] current_k,
     input [M-1:0] qm,
+    input [LOGQ-1:0] v_scale,   // ternary map of the v lane (RNSErrorPolys)
 
     // fft bram:
     output [LOGN-1:0] bram_rd_addr,
@@ -75,11 +76,13 @@ module RNS #(
   logic [LOGQ-1:0] q;
   logic [3:0] current_k_DP;
   logic [M-1:0] q_m_DP;
+  logic [LOGQ-1:0] v_scale_DP;
   always @(posedge clk) begin
     if(rst) begin
       scale_power_DP <= scale;
       q_m_DP <= qm;
       current_k_DP <= current_k;
+      v_scale_DP <= v_scale;
     end
   end
   assign q = {(13'h1fff >> (8-current_k_DP)) , q_m_DP , {(W-1){1'd0}} , 1'd1};
@@ -213,6 +216,7 @@ module RNS #(
     .clk(clk),
     .rst(rst),
     .q(q),
+    .v_scale(v_scale_DP),
     .read_addr_DP(read_addr_DP),
     .done_internal(done_internal),
 

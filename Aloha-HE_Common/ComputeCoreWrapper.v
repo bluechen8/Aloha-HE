@@ -27,12 +27,12 @@ module ComputeCoreWrapper #(
                     dma_bram_dina,
                     dma_bram_doutb,
                     dma_bram_en,
-                    reuse_keygen, reuse_limb, m_aloha_mem,   // C'-3: Aloha storage banks lifted to top
+                    k_kg, k_kw, k_scale, m_aloha_mem,   // one-limb key controls (SRAM_REUSE); C'-3 storage banks
                     ext_command);
 input [39:0] ext_command;   // EXT_COMMAND=1 only
 input clk;
-input reuse_keygen;
-input [3:0] reuse_limb;
+input k_kg, k_kw;         // per-pass KEYGEN mode and K.low writes (ComputeCore)
+input [53:0] k_scale;     // R mod q of the pass's limb
 input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
 input [159:0] prng_seed;       // Trivium key [79:0], IV [159:80]
 input [31:0] control_low_word, control_high_word;
@@ -89,7 +89,7 @@ ComputeCore #(
     .EXT_COMMAND(EXT_COMMAND)
   ) CORE(
     .clk(clk),
-    .reuse_keygen(reuse_keygen), .reuse_limb(reuse_limb),
+    .k_kg(k_kg), .k_kw(k_kw), .k_scale(k_scale),
     .rst(rst_core),
     .reseed_en(reseed_en),
     .prng_rst_i(prng_rst_i),
