@@ -40,7 +40,7 @@ module ComputeCore #(
 					done_ins_computation,                                // instruction computation finished
 					grant_ext_io,                                        // grant BRAM access to send64/receive64 or to DMA
           dma_bram_byte_wea, dma_bram_abs_addr, dina_dma, doutb_dma, dma_bram_en, // DMA interface
-          k_kg, k_kw, k_scale, m_aloha_mem                                               // C'-3: storage banks lifted to top (SyncReadMem)
+          k_kg, k_kw, k_scale, k_gad, k_perm_h, m_aloha_mem                              // C'-3: storage banks lifted to top (SyncReadMem)
 					);
 
 
@@ -82,6 +82,12 @@ input clk, rst;
 // K.low. k_scale is R mod q of the pass's limb, the unit of the ternary map.
 input k_kg, k_kw;
 input [53:0] k_scale;
+// Evaluation keys (SRAM_REUSE only; tie to 0 otherwise; docs/fhe/21): k_gad
+// is the plain gadget P mod q_j that a scalar PWM pass multiplies the key limb
+// by; k_perm_h is the Galois element h of a permuted PWM pass. Both hold for
+// the whole command.
+input [53:0] k_gad;
+input [LOGN:0] k_perm_h;
 // C'-2 free-run PRNG controls (default-tie for legacy: reseed_en=1, prng_rst_i=rst):
 //   reseed_en  - 1 => this sampling pass reloads the Trivium from `seed` (the
 //                per-pass-reload default, keystream restarts at word0). 0 => the
@@ -158,6 +164,7 @@ wire prj_rst, prj_done;
 wire sample_only = SRAM_REUSE && opcode == 3'd6;
 wire lift_active = SRAM_REUSE && opcode == 3'd7;
 wire lift_snapshot = lift_active && OP1[0];
+wire lift_zero_src = lift_active && OP1[1];   // LIFT a zero message (evaluation keys)
 wire lift_done, lift_we;
 wire [LOGN-1:0] lift_rd_addr, lift_wr_addr;
 wire [53:0] lift_data, lift_k_data;
@@ -184,6 +191,13 @@ assign pwm_negate = OP1[0];
 // stays in reset regardless of this bit.
 wire pwm_enc;
 assign pwm_enc = OP1[1];
+// PWM evaluation-key modes (SRAM_REUSE): OP1[6] multiplies by the scalar
+// k_gad, OP1[7] squares the key on BF1 first, OP1[8] reads the key at
+// pi_h(k). OP1[8:6] is constants_sel, which only transforms decode.
+wire pwm_gad, pwm_square, pwm_perm;
+assign pwm_gad    = SRAM_REUSE && OP1[6];
+assign pwm_square = SRAM_REUSE && OP1[7];
+assign pwm_perm   = SRAM_REUSE && OP1[8];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
@@ -295,7 +309,7 @@ wire [LOGN-1:0] rns_read_addr;
 wire [FLP_WORDSIZE-1:0] rns_read_data;
 wire [LOGQ-1:0] fft_im_rd_data;
 CenterLift #(.LOGN(LOGN), .BRAM_RD_LAT(BRAM_RD_LAT)) center_lift (
-    .clk(clk), .rst(!lift_active), .snapshot(lift_snapshot), .target_q(lift_q),
+    .clk(clk), .rst(!lift_active), .snapshot(lift_snapshot), .zero_src(lift_zero_src), .target_q(lift_q),
     .rd_addr(lift_rd_addr), .wr_addr(lift_wr_addr),
     .msg0(m_aloha_mem.ntt_msg0_doutb), .msg1(m_aloha_mem.ntt_msg1_doutb),
     .saved(rns_read_data), .wr_data(lift_data), .wr_en(lift_we), .done(lift_done),
@@ -914,10 +928,8 @@ if (SCHEME == 0) begin : g_pwm_pk
     );
 end else begin : g_pwm_sk
   // Secret-key PWM (Rung 6c): single multiply lane (BF0) + negate-b + c1=a
-  // passthrough. Drops the b1(FFT_IM)/c1(NTT_E1) reads and BF1 -- tie BF1 off.
-  assign pwm_bf1_ina = {LOGQ{1'b0}};
-  assign pwm_bf1_inb = {LOGQ{1'b0}};
-  assign pwm_bf1_tw  = {LOGQ{1'b0}};
+  // passthrough. Drops the b1(FFT_IM)/c1(NTT_E1) reads; BF1 squares the key
+  // for the relinearization key and is otherwise held at zero.
   PWMSk #(
       .LOGQ(LOGQ),
       .LOGN(LOGN),
@@ -931,6 +943,11 @@ end else begin : g_pwm_sk
       .current_k(current_k),
       .negate(pwm_negate),
       .enc(pwm_enc),
+      .scalar_en(pwm_gad),
+      .scalar(k_gad),
+      .square(pwm_square),
+      .perm(pwm_perm),
+      .perm_h(k_perm_h),
 
       .a_bram_rd_addr(pwm_a_rd_addr),
       .a_bram_rd_data(pwm_a_bank_sel_delayed ? ntt_v_rd_data_bank1 : ntt_v_rd_data_bank0),
@@ -951,6 +968,10 @@ end else begin : g_pwm_sk
       .pwm_bf0_inb(pwm_bf0_inb),
       .pwm_bf0_tw(pwm_bf0_tw),
       .pwm_bf0_result(pwm_bf0_result),
+      .pwm_bf1_ina(pwm_bf1_ina),
+      .pwm_bf1_inb(pwm_bf1_inb),
+      .pwm_bf1_tw(pwm_bf1_tw),
+      .pwm_bf1_result(pwm_bf1_result),
 
       .done(pwm_done)
     );

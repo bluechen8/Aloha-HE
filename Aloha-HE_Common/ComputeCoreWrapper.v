@@ -27,12 +27,14 @@ module ComputeCoreWrapper #(
                     dma_bram_dina,
                     dma_bram_doutb,
                     dma_bram_en,
-                    k_kg, k_kw, k_scale, m_aloha_mem,   // one-limb key controls (SRAM_REUSE); C'-3 storage banks
+                    k_kg, k_kw, k_scale, k_gad, k_perm_h, m_aloha_mem, // one-limb key + evaluation-key controls (SRAM_REUSE); C'-3 storage banks
                     ext_command);
 input [39:0] ext_command;   // EXT_COMMAND=1 only
 input clk;
 input k_kg, k_kw;         // per-pass KEYGEN mode and K.low writes (ComputeCore)
 input [53:0] k_scale;     // R mod q of the pass's limb
+input [53:0] k_gad;       // evaluation-key gadget P mod q_j (ComputeCore)
+input [LOGN:0] k_perm_h;  // evaluation-key Galois element h (ComputeCore)
 input reseed_en, prng_rst_i;   // C'-2 free-run PRNG controls
 input [159:0] prng_seed;       // Trivium key [79:0], IV [159:80]
 input [31:0] control_low_word, control_high_word;
@@ -89,7 +91,7 @@ ComputeCore #(
     .EXT_COMMAND(EXT_COMMAND)
   ) CORE(
     .clk(clk),
-    .k_kg(k_kg), .k_kw(k_kw), .k_scale(k_scale),
+    .k_kg(k_kg), .k_kw(k_kw), .k_scale(k_scale), .k_gad(k_gad), .k_perm_h(k_perm_h),
     .rst(rst_core),
     .reseed_en(reseed_en),
     .prng_rst_i(prng_rst_i),
