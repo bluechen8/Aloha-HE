@@ -31,7 +31,7 @@ module UnifiedTransformation #(
     // modulus info for NTT
     input [3:0] current_k,
     input [M-1:0] qm,
-    input [2:0] constants_sel,
+    input [3:0] constants_sel,
 
     // fft bram bank 0:
     output [2*`OVERALL_BITS-1:0] data_to_bram_0_fft,

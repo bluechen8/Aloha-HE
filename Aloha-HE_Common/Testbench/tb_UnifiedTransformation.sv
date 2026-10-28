@@ -76,7 +76,7 @@ module tb_UnifiedTransformation #(
   logic is_forward_transform, stall, stage_done, enable_clk;
   logic [3:0] current_k;
   logic [M-1:0] qm;
-  logic [2:0] constants_sel;
+  logic [3:0] constants_sel;
   UnifiedTransformation #(.FFT_ON_THE_FLY_GENERATION(ON_THE_FLY_GENERATION), .N(N)) dut(
     .clk(clk & enable_clk),
     .rst(rst),

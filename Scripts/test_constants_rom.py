@@ -16,9 +16,23 @@ def words(path):
 
 
 class PackedConstantsTest(unittest.TestCase):
+    def test_rtl_catalog(self):
+        """fhe_params_pkg.sv's {k, qm} table must spell the same primes."""
+        pkg = SCRIPTS.parents[2] / 'rtl/fhe_params_pkg.sv'
+        if not pkg.is_file():
+            self.skipTest('not inside the caliptra-rtl tree')
+        import re
+        rows = re.findall(r"4'd(\d+):\s*fhe_kqm = \{4'd(\d+), 17'd(\d+)\}|default: fhe_kqm = \{4'd(\d+), 17'd(\d+)\}",
+                          pkg.read_text())
+        q = {}
+        for i, k, qm, dk, dqm in rows:
+            idx, k, qm = (int(i), int(k), int(qm)) if i else (len(PRIMES) - 1, int(dk), int(dqm))
+            q[idx] = (1 << (46 + k)) - (qm << 24) + 1
+        self.assertEqual(tuple(q[i] for i in range(len(PRIMES))), PRIMES)
+
     def test_profiles_and_seeds(self):
         with tempfile.TemporaryDirectory() as directory:
-            for h, profiles in ((h,p) for h in (7,8,13) for p in (1,2,4,8)):
+            for h, profiles in ((h,p) for h in (7,8,13,14) for p in (1,2,4,8,15)):
                 with self.subTest(logn=h, profiles=profiles):
                     output = Path(directory) / f'n{1 << h}.coe'
                     subprocess.run([sys.executable, str(SCRIPTS / 'GenerateConstantsROM.py'), str(h), str(output), "--profiles", str(profiles)], check=True)

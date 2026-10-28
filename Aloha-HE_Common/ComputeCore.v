@@ -193,7 +193,8 @@ wire pwm_enc;
 assign pwm_enc = OP1[1];
 // PWM evaluation-key modes (SRAM_REUSE): OP1[6] multiplies by the scalar
 // k_gad, OP1[7] squares the key on BF1 first, OP1[8] reads the key at
-// pi_h(k). OP1[8:6] is constants_sel, which only transforms decode.
+// pi_h(k). OP1[9:6] is constants_sel (the NTT profile, up to 16), which only
+// transforms decode.
 wire pwm_gad, pwm_square, pwm_perm;
 assign pwm_gad    = SRAM_REUSE && OP1[6];
 assign pwm_square = SRAM_REUSE && OP1[7];
@@ -201,15 +202,15 @@ assign pwm_perm   = SRAM_REUSE && OP1[8];
 // transform parameters ntt & i2f:
 wire [3:0] current_k;
 wire [M-1:0] qm;
-wire [2:0] constants_sel;
+wire [3:0] constants_sel;
 assign current_k = OP1[5:2];
-assign constants_sel = OP1[8:6];
+assign constants_sel = OP1[9:6];
 assign qm = {OP3[6:0], OP2};
 assign lift_q = {(13'h1fff >> (8-current_k)), qm, 23'b0, 1'b1};
 
 // rns parameters:
 wire [3:0] modulus_select;
-assign modulus_select = OP1[9:6];
+assign modulus_select = constants_sel;  // the same OP1[9:6] limb select
 wire [`EXPONENT_BITS:0] scale;
 assign scale = {OP4, OP1[1:0], OP3[9:7]};
 // i2f parameter:
@@ -606,10 +607,10 @@ assign v_bram_rd_data = m_aloha_mem.vt_douta;
 // Constants ROM:
 // contains the "Twiddle factor cache" for FFT and NTT twiddle factor generation and the RNS constants
 wire [`FHE_CROM_AW-1:0] transform_tw_rom_addr;
-wire [8:0] rns_constant_rom_addr;
+wire [`FHE_CROM_AW-1:0] rns_constant_rom_addr;  // RNS constants sit in the 128-word prefix
 wire [2*FLP_WORDSIZE-1:0] tw_rom_data;
 // C'-3: constants ROM lifted to top (was FFTTw_RNS_ROM constants_rom).
-assign m_aloha_mem.crom_addra = (~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr[`FHE_CROM_AW-1:0];
+assign m_aloha_mem.crom_addra = (~transform_rst) ? transform_tw_rom_addr : rns_constant_rom_addr;
 assign tw_rom_data = m_aloha_mem.crom_douta;
 
 
@@ -770,7 +771,7 @@ assign rns_m_wr_data_bank0 = rns_write_data;
 assign rns_m_wr_data_bank1 = rns_write_data;
 assign rns_m_wea_bank0 = rns_wea & ~rns_write_addr[0];
 assign rns_m_wea_bank1 = rns_wea &  rns_write_addr[0];
-assign rns_constant_rom_addr[8:7] = 'd0;
+assign rns_constant_rom_addr[`FHE_CROM_AW-1:7] = 'd0;
 wire [LOGN-1:0] rns_v_write_addr;
 wire [LOGQ-1:0] rns_v_write_data;
 wire rns_v_wea;

@@ -18,7 +18,7 @@ module UnifiedTwFctGen #(
     input is_FFT,
     input [3:0] current_k,
     input [M-1:0] qm,
-    input [2:0] constants_sel,
+    input [3:0] constants_sel,
 
     output [`OVERALL_BITS-1:0] tw_real,
     output [`OVERALL_BITS-1:0] tw_imag,
@@ -83,7 +83,7 @@ module UnifiedTwFctGen #(
   always_ff @(posedge clk) begin
     // First seed of modulus constants_sel, after the 128-word FFT/RNS
     // prefix: 128 + sel*(LOGN+26).
-    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : 9'd128 + NTT_CACHE_STRIDE * constants_sel;
+    rom_base_DP <= FFT_ON_THE_FLY_GENERATION && is_FFT ? 'd0 : ADDR_WIDTH_ROM'(128 + NTT_CACHE_STRIDE * constants_sel);
   end
   assign rom_addr = rom_base_DP + rom_offset;
 

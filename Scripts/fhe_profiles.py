@@ -1,12 +1,14 @@
 """Ordered prime catalog shared by RNS and NTT; installed profiles are a prefix.
 
-Catalog 1 uses q_k = 2^(46+k) - qm_k*2^24 + 1, k=0..7.
-A build installs the first L_max = 1..8 profiles.
+Catalog 1 uses q_i = 2^(46+k_i) - qm_i*2^24 + 1: k_i = i for i = 0..7, then
+seven more 53-bit primes (k_i = 7). A build installs the first L_max = 1..15.
 """
 from pathlib import Path
 
 PRIMES = (0x3ffff7000001, 0x7fffff000001, 0xffffd8000001, 0x1fffffb000001,
-          0x3ffffe4000001, 0x7fffff9000001, 0xffffff3000001, 0x1ffffff6000001)
+          0x3ffffe4000001, 0x7fffff9000001, 0xffffff3000001, 0x1ffffff6000001,
+          0x1ffffff2000001, 0x1fffffe1000001, 0x1fffffde000001, 0x1fffffdd000001,
+          0x1fffffcc000001, 0x1fffffc9000001, 0x1fffffc2000001)
 CATALOG_ID = 1
 LAYOUT_VERSION = 2
 MAGIC = 0x46484532  # "FHE2", first word of the firmware CROM image manifest
@@ -14,7 +16,7 @@ MAGIC = 0x46484532  # "FHE2", first word of the firmware CROM image manifest
 
 def installed(count):
     if not 1 <= count <= len(PRIMES):
-        raise ValueError('installed profile count must be 1..8')
+        raise ValueError(f'installed profile count must be 1..{len(PRIMES)}')
     return PRIMES[:count]
 
 
