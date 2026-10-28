@@ -32,7 +32,9 @@ module Project #(
       pos_ctr_DP <= 'd1;
       dest_addr_DP <= (N/2) - 2;   // N=8192 -> 0xffe; sweeps all N/2 slots (wrapping)
     end else if(~done_internal_2DP) begin 
-      pos_ctr_DP <= (pos_ctr_DP << 1) + pos_ctr_DP;
+      // Slot j is the root zeta^(5^j) (Lattigo's and fhe-sw-client's order;
+      // the original Aloha-HE walked 3^j, SEAL's): pos = 5^j mod 2N.
+      pos_ctr_DP <= (pos_ctr_DP << 2) + pos_ctr_DP;
       dest_addr_DP <= dest_addr_DP + 'd1;
     end
   end

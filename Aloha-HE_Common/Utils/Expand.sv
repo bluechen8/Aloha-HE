@@ -37,7 +37,9 @@ module Expand #(
     if(rst)
       pos_ctr_DP <= 'd1;
     else if(update_counter)
-      pos_ctr_DP <= (pos_ctr_DP << 1) + pos_ctr_DP;
+      // Slot j is the root zeta^(5^j) (Lattigo's and fhe-sw-client's order;
+      // the original Aloha-HE walked 3^j, SEAL's): pos = 5^j mod 2N.
+      pos_ctr_DP <= (pos_ctr_DP << 2) + pos_ctr_DP;
   end
 
   assign wea_internal = wea_from_sw_1DP == 'd0 && wea_from_sw == 'd1;
